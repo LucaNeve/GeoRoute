@@ -69,5 +69,3 @@ Contribuire / estendere
 Licenza & note
 
 Questo repository è un progetto personale/prototipo. Non contiene credenziali o dati sensibili.
-
-Se vuoi, posso aggiungere script PowerShell start-server.ps1/stop-server.ps1 o un README più esteso con istruzioni di sviluppo (lint, test, dipendenze).
