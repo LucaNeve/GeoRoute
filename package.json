@@ -1,0 +1,19 @@
+{
+  "name": "confini",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "three": "^0.185.1",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2",
+    "world-countries": "^5.1.0"
+  }
+}

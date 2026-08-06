@@ -1,0 +1,425 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #101010;
+  color: #f5f5f5;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#canvas-container {
+  position: absolute;
+  inset: 0;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+
+#ui {
+  display: none; /* legacy */
+}
+
+#topLeft {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 20;
+}
+
+#topRight {
+  position: absolute;
+  right: 18px;
+  top: 12px;
+  z-index: 20;
+}
+
+#bottomCenter {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 20;
+}
+
+#statusLabel {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 78px;
+  color: #d8d8d8;
+  padding: 6px 10px;
+  background: rgba(14,14,14,0.7);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.9rem;
+  z-index: 20;
+}
+
+
+.timeline-sidebar {
+  position: absolute;
+  /* move timeline to the left side */
+  left: 12px;
+  top: 120px;
+  width: 200px;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(20,20,20,0.92), rgba(14,14,14,0.88));
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.06);
+  z-index: 20;
+}
+
+/* custom scrollbar for timeline */
+.timeline-sidebar::-webkit-scrollbar { width: 10px; }
+.timeline-sidebar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
+.timeline-sidebar::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(0,150,80,0.9), rgba(0,120,60,0.9)); border-radius: 8px; border: 2px solid rgba(0,0,0,0.2); }
+.timeline-sidebar { scrollbar-width: thin; scrollbar-color: rgba(0,150,80,0.9) rgba(255,255,255,0.02); }
+
+/* ensure align button is always on top of the timeline */
+#alignButton { z-index: 99998; position: relative; }
+#topRight { z-index: 99999; }
+
+.timeline-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.timeline-item .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+  flex: 0 0 10px;
+}
+
+.timeline-item .label {
+  font-size: 0.85rem;
+  color: #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hover-tooltip {
+  position: absolute;
+  pointer-events: none;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.9);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  z-index: 120;
+  transform: translate(-50%, -140%);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+}
+
+.placeBox {
+  min-width: 120px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  z-index: 20;
+}
+
+#settingsMenu {
+  position: absolute;
+  right: 0;
+  top: 52px;
+  background: rgba(14,14,14,0.98);
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 10px;
+  border-radius: 8px;
+  min-width: 220px;
+  z-index: 99999; /* ensure menu is above timeline */
+}
+
+.timeline-sidebar {
+  z-index: 20; /* ensure below menu */
+}
+
+#alignButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+#currentBox, #targetBox {
+  cursor: pointer;
+}
+
+.placeBox {
+  min-width: 120px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+
+#topRight {
+  position: absolute;
+  right: 18px;
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#topRight > div { display:flex; flex-direction:column; align-items:flex-end; }
+
+#menuButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #fff;
+  cursor: pointer;
+}
+
+#newGameButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #fff;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+#settingsMenu.hidden { display: none; }
+#settingsMenu {
+  position: absolute;
+  right: 0;
+  top: 52px;
+  background: rgba(14,14,14,0.96);
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 10px;
+  border-radius: 8px;
+  min-width: 220px;
+}
+
+#bottomCenter {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 22px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#arrow {
+  color: rgba(255,255,255,0.9);
+  font-size: 20px;
+  padding: 0 6px;
+  align-self: center;
+}
+
+.placeBox:hover {
+  filter: brightness(1.05);
+}
+
+#bottomCenter button {
+  width: 56px; /* slightly larger */
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+#bottomCenter button:hover { background: rgba(255,255,255,0.12); }
+
+#statusLabel {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 78px;
+  color: #d8d8d8;
+  padding: 6px 10px;
+  background: rgba(14,14,14,0.7);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.9rem;
+}
+
+#labels {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+#labels > div,
+#statusLabel,
+#inputRow {
+  background: rgba(14, 14, 14, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+#labels > div {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+#statusLabel {
+  color: #b8b8b8;
+  font-size: 0.82rem;
+}
+
+#inputRow {
+  display: grid;
+  grid-template-columns: 1fr 44px 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+#controlsRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#difficultyControls .small,
+#continentControls .small {
+  width: 38px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.04);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* style for the small check buttons in the menu */
+.icon-check {
+  width: 40px;
+  height: 34px;
+  border-radius: 8px;
+  background: #fff;
+  color: #000;
+  border: 1px solid rgba(0,0,0,0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.icon-check:hover { filter: brightness(0.95); }
+
+#difficultyControls .small.active,
+#continentControls .small.active {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.16);
+}
+
+input,
+button {
+  font: inherit;
+  border: none;
+  border-radius: 10px;
+  color: #f5f5f5;
+}
+
+input {
+  min-width: 0;
+  padding: 8px 10px;
+  outline: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255,255,255,0.04);
+}
+
+#inputRow button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+#inputRow button:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+
+button {
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+#countryInput::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}

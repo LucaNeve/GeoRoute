@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MondoConfini</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-container">
+      <canvas id="globeCanvas"></canvas>
+    </div>
+
+    <div id="topLeft">
+      <div id="currentBox" class="placeBox">Partenza</div>
+      <div id="arrow">→</div>
+      <div id="targetBox" class="placeBox">Obiettivo</div>
+    </div>
+
+    <div id="topRight">
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
+        <button id="menuButton" title="Menu">☰</button>
+        <button id="newGameButton" title="Nuova partita">+</button>
+        <button id="alignButton" title="Allinea equatore">⤒</button>
+      </div>
+      <div id="settingsMenu" class="hidden">
+        <div id="menuControls">
+          <div id="difficultyControls" title="Scegli difficoltà">
+            <button class="small" data-diff="easy" title="Facile">★</button>
+            <button class="small" data-diff="medium" title="Medio">★★</button>
+            <button class="small" data-diff="hard" title="Difficile">★★★</button>
+          </div>
+          <div id="continentControls" title="Filtra per continente">
+            <button class="small" data-cont="all" title="Tutti">All</button>
+            <button class="small" data-cont="Africa" title="Africa">AF</button>
+            <button class="small" data-cont="Europe" title="Europa">EU</button>
+            <button class="small" data-cont="Asia" title="Asia">AS</button>
+            <button class="small" data-cont="Americas" title="Americhe">AM</button>
+            <button class="small" data-cont="Oceania" title="Oceania">OC</button>
+          </div>
+          <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+                      <div style="display:flex; gap:6px; align-items:center;"><input id="manualStart" placeholder="Start name" style="flex:1;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff;"><button id="applyManualStart" title="Imposta partenza" class="icon-check">✓</button></div>
+                      <div style="display:flex; gap:6px; align-items:center;"><input id="manualTarget" placeholder="Target name" style="flex:1;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff;"><button id="applyManualTarget" title="Imposta obiettivo" class="icon-check">✓</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="bottomCenter">
+      <input id="countryInput" placeholder="inserisci stato" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <button id="submitButton" title="Invia stato (Enter)">➜</button>
+    </div>
+
+    <div id="statusLabel"></div>
+    <div id="timelineSidebar" class="timeline-sidebar"></div>
+    <div id="hoverTooltip" class="hover-tooltip" style="display:none"></div>
+  </div>
+
+  <script src="vendor/topojson-client.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
