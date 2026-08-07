@@ -9,6 +9,14 @@ const submitButton = document.getElementById('submitButton');
 const newGameButton = document.getElementById('newGameButton');
 const menuButton = document.getElementById('menuButton');
 const settingsMenu = document.getElementById('settingsMenu');
+const victoryOverlay = document.getElementById('victoryOverlay');
+const victoryTitle = document.getElementById('victoryTitle');
+const victoryMessage = document.getElementById('victoryMessage');
+const victoryBadge = document.getElementById('victoryBadge');
+const playAgainButton = document.getElementById('playAgainButton');
+const closeVictoryButton = document.getElementById('closeVictoryButton');
+const countryTooltip = document.getElementById('countryTooltip');
+let overlayMode = 'victory'; // 'victory' | 'setup' — tracks which flow opened the overlay
 
 // increase texture resolution for crisper country edges
 const textureWidth = 4096;
@@ -24,6 +32,7 @@ textureContext.lineCap = 'round';
 
 let scene, camera, renderer, globe, globeMaterial;
 let countries = [];
+let renderCountries = []; // used for drawing the map: includes islands with no land borders
 let iso3Map = new Map();
 let nameMap = new Map();
 let featureByIso = new Map();
@@ -38,6 +47,8 @@ let zoomMinZ = 320;
 let zoomMaxZ = 900;
 let baseFitDistance = null; // reference fit distance to scale rotation sensitivity
 let viewAnim = null; // { startQ, endQ, startZ, endZ, startTime, duration }
+let islandConnections = []; // [{a: iso3, b: iso3}] sea-route links drawn like Risiko
+const raycaster = new THREE.Raycaster();
 
 function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 
@@ -58,31 +69,32 @@ function initialize([topology, countryData]) {
     countryInput.disabled = false;
   }
   if (submitButton) submitButton.disabled = false;
+  document.title = 'GeoRoute';
   startNewGame();
   animate();
 }
 
-function setupControls() {
-  // difficulty buttons
-  document.querySelectorAll('#difficultyControls .small').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#difficultyControls .small').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
+function setActiveDifficulty(diff) {
+  document.querySelectorAll('[data-diff]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.diff === diff);
   });
-  // default medium
-  const defaultDiff = document.querySelector('#difficultyControls .small[data-diff="medium"]');
-  if (defaultDiff) defaultDiff.classList.add('active');
+}
 
-  // continent buttons
-  document.querySelectorAll('#continentControls .small').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#continentControls .small').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
+function setActiveContinent(continent) {
+  document.querySelectorAll('[data-cont]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cont === continent);
   });
-  const defaultCont = document.querySelector('#continentControls .small[data-cont="all"]');
-  if (defaultCont) defaultCont.classList.add('active');
+}
+
+function setupControls() {
+  document.querySelectorAll('[data-diff]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveDifficulty(btn.dataset.diff));
+  });
+  document.querySelectorAll('[data-cont]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveContinent(btn.dataset.cont));
+  });
+  setActiveDifficulty('medium');
+  setActiveContinent('all');
 
   // menu toggle
   if (menuButton && settingsMenu) {
@@ -95,22 +107,23 @@ function setupControls() {
     });
   }
 
-  // explicit new game in menu: ensure it enables input and closes menu
+  // "+" apre il popup per scegliere difficoltà/continente prima di iniziare una nuova partita
   if (newGameButton) {
-    newGameButton.addEventListener('click', (e) => {
-      // if newGameButton is the one under menu, also close menu
+    newGameButton.addEventListener('click', () => {
       if (settingsMenu) settingsMenu.classList.add('hidden');
-      // start new game and ensure input enabled
-      startNewGame();
-      if (countryInput) {
-        countryInput.disabled = false;
-        countryInput.removeAttribute('disabled');
-        countryInput.style.pointerEvents = 'auto';
-        countryInput.value = '';
-        countryInput.focus();
-      }
-      if (submitButton) { submitButton.disabled = false; submitButton.removeAttribute('disabled'); submitButton.style.pointerEvents = 'auto'; }
+      openGameOverlay('setup');
     });
+  }
+
+  if (playAgainButton) {
+    playAgainButton.addEventListener('click', () => {
+      hideVictoryOverlay();
+      startNewGame();
+    });
+  }
+
+  if (closeVictoryButton) {
+    closeVictoryButton.addEventListener('click', hideVictoryOverlay);
   }
 
   const alignButton = document.getElementById('alignButton');
@@ -227,7 +240,14 @@ function buildCountryMetadata(countryData, geoFeatures) {
     }
   });
 
+  // collega ogni isola (nessun confine terrestre) al paese più vicino, come le rotte
+  // marittime tratteggiate di Risiko: la rende sia visitabile che disegnabile sulla mappa
+  connectIslandsToNearest();
+
   countries = Array.from(iso3Map.values()).filter(country => country.borders.length > 0 && country.feature);
+  // renderCountries includes every country with valid map geometry, even islands with no land borders,
+  // so they still appear on the globe (just not selectable as start/target for the walking game)
+  renderCountries = Array.from(iso3Map.values()).filter(country => country.feature);
 
   // Special adjacency fixes: connect USA and RUS across Bering Strait so players can traverse
   try {
@@ -240,6 +260,42 @@ function buildCountryMetadata(countryData, geoFeatures) {
   } catch (e) {
     // ignore if mapping not present
   }
+}
+
+function haversineDistance(p1, p2) {
+  const R = 6371;
+  const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+  const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+  const lat1 = p1.lat * Math.PI / 180;
+  const lat2 = p2.lat * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function connectIslandsToNearest() {
+  islandConnections = [];
+  const withFeature = Array.from(iso3Map.values()).filter(c => c.feature);
+  const islands = withFeature.filter(c => c.borders.length === 0);
+  islands.forEach(island => {
+    const centroidA = computeFeatureCentroid(island.feature);
+    let best = null;
+    let bestDist = Infinity;
+    withFeature.forEach(other => {
+      if (other.code === island.code) return;
+      const centroidB = computeFeatureCentroid(other.feature);
+      const d = haversineDistance(centroidA, centroidB);
+      if (d < bestDist) {
+        bestDist = d;
+        best = other;
+      }
+    });
+    if (best) {
+      // rotta marittima bidirezionale: rende l'isola raggiungibile come una "traversata"
+      if (!island.borders.includes(best.code)) island.borders.push(best.code);
+      if (!best.borders.includes(island.code)) best.borders.push(island.code);
+      islandConnections.push({ a: island.code, b: best.code });
+    }
+  });
 }
 
 function buildAliases(country) {
@@ -317,12 +373,13 @@ function initThree() {
 
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointermove', onCanvasHover);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointerleave', onPointerUp);
+  canvas.addEventListener('pointerleave', hideTooltip);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
   submitButton.addEventListener('click', submitMove);
-  newGameButton.addEventListener('click', startNewGame);
   countryInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       submitMove();
@@ -354,6 +411,7 @@ function mapClientToSphere(clientX, clientY) {
 
 function onPointerDown(event) {
   isDragging = true;
+  hideTooltip();
   canvas.setPointerCapture(event.pointerId);
   trackStartVec = mapClientToSphere(event.clientX, event.clientY);
   trackStartQuat = globe.quaternion.clone();
@@ -392,6 +450,68 @@ function onPointerUp(event) {
   trackStartQuat = null;
 }
 
+// Restituisce i paesi "colorati" del percorso (partenza, tappe visitate, corrente, obiettivo)
+function getColoredCountries() {
+  if (!game) return [];
+  const codes = new Set(game.path || []);
+  if (game.target) codes.add(game.target.code);
+  const list = [];
+  codes.forEach(code => {
+    const c = iso3Map.get(code);
+    if (c && c.feature) list.push(c);
+  });
+  return list;
+}
+
+function onCanvasHover(event) {
+  if (isDragging || !game || !globe || !camera) {
+    hideTooltip();
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  const ndcY = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+  raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+  const hits = raycaster.intersectObject(globe);
+  if (!hits.length) {
+    hideTooltip();
+    return;
+  }
+  // porta il punto d'intersezione nello spazio locale (non ruotato) del globo
+  const worldPoint = hits[0].point.clone().normalize();
+  const invQ = globe.quaternion.clone().invert();
+  const localPoint = worldPoint.applyQuaternion(invQ);
+  const ll = vectorToLatLon(localPoint);
+
+  const candidates = getColoredCountries();
+  let found = null;
+  for (const country of candidates) {
+    if (pointInFeatureLatLon(ll.lon, ll.lat, country.feature)) {
+      found = country;
+      break;
+    }
+  }
+
+  if (found) {
+    showTooltip(event.clientX, event.clientY, found.name);
+  } else {
+    hideTooltip();
+  }
+}
+
+function showTooltip(x, y, text) {
+  if (!countryTooltip) return;
+  countryTooltip.textContent = text;
+  countryTooltip.style.left = `${x}px`;
+  countryTooltip.style.top = `${y}px`;
+  countryTooltip.classList.remove('hidden');
+}
+
+function hideTooltip() {
+  if (!countryTooltip) return;
+  countryTooltip.classList.add('hidden');
+}
+
 function onWheel(event) {
   // zoom camera by adjusting z position
   event.preventDefault();
@@ -411,6 +531,8 @@ function renderTexture() {
   textureContext.strokeStyle = 'rgba(255,255,255,1)';
 
   geoDrawAllCountries();
+  // rotte marittime tratteggiate verso le isole, stile Risiko
+  drawIslandConnections();
   // draw small country markers for microstates that would be invisible otherwise
   drawSmallCountryDots();
 
@@ -428,7 +550,7 @@ function geoDrawAllCountries() {
     game.path.forEach((code, i) => pathIndex.set(code, i));
   }
 
-  for (const country of countries) {
+  for (const country of renderCountries) {
     const feature = country.feature;
     if (!feature) continue;
 
@@ -453,6 +575,33 @@ function geoDrawAllCountries() {
   }
 }
 
+function drawIslandConnections() {
+  if (!islandConnections.length) return;
+  textureContext.save();
+  textureContext.setLineDash([6, 7]);
+  textureContext.lineWidth = 1.8;
+  textureContext.strokeStyle = 'rgba(255,255,255,0.55)';
+  islandConnections.forEach(({ a, b }) => {
+    const ca = iso3Map.get(a);
+    const cb = iso3Map.get(b);
+    if (!ca?.feature || !cb?.feature) return;
+    const p1 = computeFeatureCentroid(ca.feature);
+    const p2 = computeFeatureCentroid(cb.feature);
+    // evita di attraversare l'intera mappa quando la coppia è a cavallo dell'antimeridiano
+    let lon2 = p2.lon;
+    if (Math.abs(lon2 - p1.lon) > 180) {
+      lon2 += (lon2 < p1.lon) ? 360 : -360;
+    }
+    const [x1, y1] = projectPoint([p1.lon, p1.lat]);
+    const [x2, y2] = projectPoint([lon2, p2.lat]);
+    textureContext.beginPath();
+    textureContext.moveTo(x1, y1);
+    textureContext.lineTo(x2, y2);
+    textureContext.stroke();
+  });
+  textureContext.restore();
+}
+
 function lerpColorRGBA(a, b, t) {
   const r = Math.round(a[0] + (b[0] - a[0]) * t);
   const g = Math.round(a[1] + (b[1] - a[1]) * t);
@@ -463,12 +612,27 @@ function lerpColorRGBA(a, b, t) {
 
 function drawGeoFeature(feature, fillStyle) {
   const geometry = feature.geometry;
-  textureContext.beginPath();
+  const rings = [];
   if (geometry.type === 'Polygon') {
-    geometry.coordinates.forEach(ring => drawRing(ring));
+    geometry.coordinates.forEach(ring => rings.push(ring));
   } else if (geometry.type === 'MultiPolygon') {
-    geometry.coordinates.forEach(polygon => polygon.forEach(ring => drawRing(ring)));
+    geometry.coordinates.forEach(polygon => polygon.forEach(ring => rings.push(ring)));
   }
+
+  // se il contorno attraversa l'antimeridiano (es. Russia, Fiji, ecc.), lo "srotoliamo"
+  // in una sequenza di longitudini continua e lo ridisegniamo anche traslato di ±360°,
+  // cosi la parte che uscirebbe da un lato della texture riappare correttamente dall'altro
+  const unwrappedRings = rings.map(unwrapRingLongitudes);
+  const needsWrap = unwrappedRings.some(pts => {
+    const lons = pts.map(p => p[0]);
+    return Math.min(...lons) < -180 || Math.max(...lons) > 180;
+  });
+  const lonOffsets = needsWrap ? [-360, 0, 360] : [0];
+
+  textureContext.beginPath();
+  lonOffsets.forEach(offset => {
+    unwrappedRings.forEach(pts => drawRing(pts, offset));
+  });
   // fill
   textureContext.fillStyle = fillStyle;
   textureContext.fill();
@@ -483,32 +647,40 @@ function drawGeoFeature(feature, fillStyle) {
   textureContext.restore();
 }
 
-function drawRing(ring) {
-  if (!ring || ring.length === 0) return;
-  // handle antimeridian seams: break path when lon jump > 180
-  let prevLon = ring[0][0];
-  let started = false;
+// converte le longitudini di un ring in una sequenza continua (non normalizzata a -180..180),
+// cosi due punti consecutivi non "saltano" mai di più di 180°: elimina lo strappo sull'antimeridiano
+function unwrapRingLongitudes(ring) {
+  if (!ring || !ring.length) return [];
+  const out = [];
+  let prevLon = null;
+  let offset = 0;
   for (let i = 0; i < ring.length; i++) {
     let [lon, lat] = ring[i];
-    // normalize lon into -180..180
-    if (lon > 180) lon -= 360;
-    if (lon < -180) lon += 360;
-    if (i > 0) {
-      let d = Math.abs(lon - prevLon);
-      if (d > 180) {
-        // seam: close current subpath and start new
-        textureContext.closePath();
-        started = false;
-      }
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    if (prevLon !== null) {
+      const diff = lon - prevLon;
+      if (diff > 180) offset -= 360;
+      else if (diff < -180) offset += 360;
     }
-    const [x, y] = projectPoint([lon, lat]);
+    out.push([lon + offset, lat]);
+    prevLon = lon;
+  }
+  return out;
+}
+
+function drawRing(points, lonOffset = 0) {
+  if (!points || points.length === 0) return;
+  let started = false;
+  for (let i = 0; i < points.length; i++) {
+    const [lon, lat] = points[i];
+    const [x, y] = projectPoint([lon + lonOffset, lat]);
     if (!started) {
       textureContext.moveTo(x, y);
       started = true;
     } else {
       textureContext.lineTo(x, y);
     }
-    prevLon = lon;
   }
   // ensure ring path is closed to avoid stray connecting strokes
   try { textureContext.closePath(); } catch (e) {}
@@ -517,13 +689,18 @@ function drawRing(ring) {
 // Known microstates (always show marker when target)
 const MICROSTATE_ISO3 = new Set(['MCO','SMR','VAT','LIE','AND','MLT']);
 
-// Detect tiny countries and draw small marker only for the destination country (if tiny or known microstate)
+// Detect tiny countries and draw a marker so they're visible even when too small to see:
+// green if it's where ti trovi ora (partenza/posizione corrente), red if è l'obiettivo
 function drawSmallCountryDots() {
-  if (!countries || !countries.length || !game) return;
-  const targetCode = game?.target?.code;
-  if (!targetCode) return;
+  if (!game) return;
+  const currentCode = game.current?.code;
+  const targetCode = game.target?.code;
+  if (currentCode) drawMicroMarkerIfNeeded(currentCode, COLOR_CURRENT);
+  if (targetCode && targetCode !== currentCode) drawMicroMarkerIfNeeded(targetCode, COLOR_TARGET);
+}
 
-  const country = iso3Map.get(targetCode);
+function drawMicroMarkerIfNeeded(code, color) {
+  const country = iso3Map.get(code);
   if (!country || !country.feature) return;
   const bounds = computeFeaturePixelBounds(country.feature);
   // if bounds missing, bail
@@ -532,18 +709,25 @@ function drawSmallCountryDots() {
   const h = bounds.maxY - bounds.minY;
   // threshold for small on the high-res texture
   const pixelThreshold = 12; // slightly larger to catch small cases
-  const isMicro = MICROSTATE_ISO3.has(targetCode);
+  const isMicro = MICROSTATE_ISO3.has(code);
   if (isMicro || Math.max(w, h) <= pixelThreshold) {
     const c = computeFeatureCentroid(country.feature);
     const [cx, cy] = projectPoint([c.lon, c.lat]);
+
+    // alone esterno semi-trasparente, per farlo notare anche a zoom lontano
     textureContext.beginPath();
-    const r = 6; // visible marker radius
-    textureContext.arc(cx, cy, r, 0, Math.PI * 2);
-    // target gets vivid red marker
-    textureContext.fillStyle = COLOR_TARGET;
+    textureContext.arc(cx, cy, 34, 0, Math.PI * 2);
+    textureContext.fillStyle = color.replace(/,[\d.]+\)$/, ',0.28)');
     textureContext.fill();
-    // small bright outline
-    textureContext.lineWidth = 1.4;
+
+    // pallino pieno ben visibile
+    textureContext.beginPath();
+    const r = 20; // marker grande e leggibile sulla texture 4096px
+    textureContext.arc(cx, cy, r, 0, Math.PI * 2);
+    textureContext.fillStyle = color;
+    textureContext.fill();
+    // bordo bianco netto
+    textureContext.lineWidth = 3;
     textureContext.strokeStyle = 'rgba(255,255,255,0.98)';
     textureContext.stroke();
   }
@@ -696,8 +880,8 @@ function startNewGame() {
   let start = null;
   let target = null;
 
-  const diff = (document.querySelector('#difficultyControls .small.active') || {}).dataset?.diff || 'medium';
-  const continent = (document.querySelector('#continentControls .small.active') || {}).dataset?.cont || 'all';
+  const diff = (document.querySelector('[data-choice-group="difficulty"] .small.active') || {}).dataset?.diff || 'medium';
+  const continent = (document.querySelector('[data-choice-group="continent"] .small.active') || {}).dataset?.cont || 'all';
 
   function candidatePool() {
     if (continent && continent !== 'all') {
@@ -921,10 +1105,39 @@ function submitMove() {
 
   if (game.current.code === game.target.code) {
     statusLabel.textContent = 'Obiettivo raggiunto!';
-    alert(`Hai raggiunto ${game.current.name}!`);
+    openGameOverlay('victory');
   } else {
     statusLabel.textContent = '';
   }
+}
+
+function openGameOverlay(mode) {
+  if (!victoryOverlay) return;
+  overlayMode = mode;
+  if (mode === 'victory') {
+    const startName = game?.start?.name || 'Partenza';
+    const targetName = game?.target?.name || 'Obiettivo';
+    if (victoryBadge) victoryBadge.textContent = '🏆';
+    if (victoryTitle) victoryTitle.textContent = 'Hai vinto!';
+    if (victoryMessage) victoryMessage.textContent = `Hai raggiunto ${targetName} partendo da ${startName}. Vuoi giocare un'altra sfida?`;
+    if (playAgainButton) playAgainButton.textContent = 'Gioca ancora';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+  } else {
+    // 'setup': avvio di una nuova partita dal pulsante "+"
+    if (victoryBadge) victoryBadge.textContent = '🌍';
+    if (victoryTitle) victoryTitle.textContent = 'Nuova partita';
+    if (victoryMessage) victoryMessage.textContent = 'Scegli difficoltà e continente, poi inizia la sfida.';
+    if (playAgainButton) playAgainButton.textContent = 'Inizia';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Annulla';
+  }
+  victoryOverlay.classList.remove('hidden');
+  if (countryInput) countryInput.blur();
+  if (submitButton) submitButton.blur();
+}
+
+function hideVictoryOverlay() {
+  if (!victoryOverlay) return;
+  victoryOverlay.classList.add('hidden');
 }
 
 function findCountryByName(value) {
@@ -956,9 +1169,6 @@ function findCountryByName(value) {
   }
   return best;
 }
-
-let lastHoverTime = 0;
-let hoverCountryCache = null;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1000,115 +1210,6 @@ function startViewAnimation(endQ, endZ, duration = 600) {
     startTime: performance.now(),
     duration
   };
-}
-
-// hover detection: map mouse to sphere intersection, then check visited countries
-let lastMouse = { x: 0, y: 0 };
-let hoverThrottleMs = 80; // throttle
-
-canvas.addEventListener('pointermove', (e) => {
-  lastMouse.x = e.clientX;
-  lastMouse.y = e.clientY;
-  handleHover(e);
-});
-
-function handleHover(e) {
-  if (isDragging) return; // don't show tooltip while dragging
-  const now = Date.now();
-  if (now - lastHoverTime < hoverThrottleMs) return;
-  lastHoverTime = now;
-  const rect = canvas.getBoundingClientRect();
-  const mouse = new THREE.Vector2(
-    ((e.clientX - rect.left) / rect.width) * 2 - 1,
-    -((e.clientY - rect.top) / rect.height) * 2 + 1
-  );
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(mouse, camera);
-  const intersects = raycaster.intersectObject(globe, false);
-  if (!intersects || intersects.length === 0) {
-    hideHoverTooltip();
-    hoverCountryCache = null;
-    return;
-  }
-  const point = intersects[0].point.clone().normalize();
-  const latlon = vectorToLatLon(point);
-  // check visited countries only
-  if (!game || !game.visited) { hideHoverTooltip(); hoverCountryCache = null; return; }
-  // cache: if last found same country and mouse close, skip heavy loop
-  if (hoverCountryCache && hoverCountryCache.lastPoint) {
-    const dx = latlon.lon - hoverCountryCache.lastPoint.lon;
-    const dy = latlon.lat - hoverCountryCache.lastPoint.lat;
-    if (Math.hypot(dx, dy) < 0.1 && hoverCountryCache.country) {
-      showHoverTooltip(e.clientX, e.clientY, hoverCountryCache.country.name);
-      return;
-    }
-  }
-
-  let found = null;
-  // check colored countries: visited + current + target
-  const checkCodes = new Set(game.visited);
-  if (game.current && game.current.code) checkCodes.add(game.current.code);
-  if (game.target && game.target.code) checkCodes.add(game.target.code);
-
-  const pointerPixel = projectPoint([latlon.lon, latlon.lat]);
-  for (const code of checkCodes) {
-    const country = iso3Map.get(code);
-    if (!country || !country.feature) continue;
-    if (pointInFeatureLatLon(latlon.lon, latlon.lat, country.feature)) {
-      found = country;
-      break;
-    }
-    // if not contained, consider small-country dot proximity
-    const bounds = computeFeaturePixelBounds(country.feature);
-    if (bounds) {
-      const w = bounds.maxX - bounds.minX;
-      const h = bounds.maxY - bounds.minY;
-      if (Math.max(w, h) <= 10) {
-        const cent = computeFeatureCentroid(country.feature);
-        const centPix = projectPoint([cent.lon, cent.lat]);
-        const dx = centPix[0] - pointerPixel[0];
-        const dy = centPix[1] - pointerPixel[1];
-        const dist = Math.hypot(dx, dy);
-        if (dist <= 10) { // threshold in texture pixels
-          found = country;
-          break;
-        }
-      }
-    }
-  }
-  if (found) {
-    hoverCountryCache = { country: found, lastPoint: latlon };
-    showHoverTooltip(e.clientX, e.clientY, found.name);
-  } else {
-    hoverCountryCache = null;
-    hideHoverTooltip();
-  }
-}
-
-function showHoverTooltip(clientX, clientY, text) {
-  const tip = document.getElementById('hoverTooltip');
-  const app = document.getElementById('app');
-  if (!tip || !canvas || !app) return;
-  // position tooltip relative to the #app container to avoid layout offsets
-  const appRect = app.getBoundingClientRect();
-  // clamp client coords into app rect
-  let cx = clientX;
-  let cy = clientY;
-  if (cx < appRect.left) cx = appRect.left;
-  if (cx > appRect.right) cx = appRect.right;
-  if (cy < appRect.top) cy = appRect.top;
-  if (cy > appRect.bottom) cy = appRect.bottom;
-  // place tooltip slightly above the pointer, centered horizontally
-  tip.style.left = (cx - appRect.left) + 'px';
-  tip.style.top = (cy - appRect.top - 12) + 'px';
-  tip.textContent = text;
-  tip.style.display = 'block';
-}
-
-function hideHoverTooltip() {
-  const tip = document.getElementById('hoverTooltip');
-  if (!tip) return;
-  tip.style.display = 'none';
 }
 
 function vectorToLatLon(v) {
