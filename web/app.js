@@ -18,6 +18,7 @@ const victoryBadge = document.getElementById('victoryBadge');
 const playAgainButton = document.getElementById('playAgainButton');
 const closeVictoryButton = document.getElementById('closeVictoryButton');
 const countryTooltip = document.getElementById('countryTooltip');
+const timerDisplay = document.getElementById('timerDisplay');
 
 const textureWidth = 4096;
 const textureHeight = 2048;
@@ -38,7 +39,11 @@ let featureByIso = new Map();
 let game = null;
 let isDragging = false;
 let showSuggestions = false;
-let overlayMode = 'setup'; // Dichiarata correttamente per strict mode
+let overlayMode = 'setup';
+let selectedGameMode = 'standard'; // 'standard' | 'speedrun' | 'hardcore'
+let speedrunTimer = null;
+let speedrunTimeLeft = 60;
+
 let sphereRadius = 170;
 let zoomMinZ = 320;
 let zoomMaxZ = 900;
@@ -68,6 +73,13 @@ function initialize([topology, countryData]) {
   animate();
 }
 
+function setActiveMode(mode) {
+  selectedGameMode = mode;
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+}
+
 function setActiveDifficulty(diff) {
   document.querySelectorAll('[data-diff]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.diff === diff);
@@ -81,12 +93,17 @@ function setActiveContinent(continent) {
 }
 
 function setupControls() {
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveMode(btn.dataset.mode));
+  });
   document.querySelectorAll('[data-diff]').forEach(btn => {
     btn.addEventListener('click', () => setActiveDifficulty(btn.dataset.diff));
   });
   document.querySelectorAll('[data-cont]').forEach(btn => {
     btn.addEventListener('click', () => setActiveContinent(btn.dataset.cont));
   });
+
+  setActiveMode('standard');
   setActiveDifficulty('medium');
   setActiveContinent('all');
 
@@ -109,9 +126,7 @@ function setupControls() {
   }
 
   if (menuButton && settingsMenu) {
-    menuButton.addEventListener('click', () => {
-      settingsMenu.classList.toggle('hidden');
-    });
+    menuButton.addEventListener('click', () => settingsMenu.classList.toggle('hidden'));
     window.addEventListener('pointerdown', (e) => {
       if (!settingsMenu.contains(e.target) && e.target !== menuButton) settingsMenu.classList.add('hidden');
     });
@@ -131,9 +146,7 @@ function setupControls() {
     });
   }
 
-  if (closeVictoryButton) {
-    closeVictoryButton.addEventListener('click', hideVictoryOverlay);
-  }
+  if (closeVictoryButton) closeVictoryButton.addEventListener('click', hideVictoryOverlay);
 
   const alignButton = document.getElementById('alignButton');
   if (alignButton) {
@@ -143,42 +156,6 @@ function setupControls() {
       const localCenter = new THREE.Vector3(0,0,1).applyQuaternion(invQ);
       const ll = vectorToLatLon(localCenter);
       centerLonLatWithEquator(ll.lon, ll.lat);
-    });
-  }
-
-  const applyStart = document.getElementById('applyManualStart');
-  const applyTarget = document.getElementById('applyManualTarget');
-  const manualStart = document.getElementById('manualStart');
-  const manualTarget = document.getElementById('manualTarget');
-  if (applyStart && manualStart) {
-    applyStart.addEventListener('click', () => {
-      const v = (manualStart.value || '').trim();
-      const c = findCountryByName(v);
-      if (c) {
-        game.start = c;
-        game.current = c;
-        game.visited = new Set([c.code]);
-        game.path = [c.code];
-        updateLabels();
-        renderTexture();
-        statusLabel.textContent = 'Partenza impostata.';
-      } else {
-        statusLabel.textContent = 'Nome start non trovato.';
-      }
-    });
-  }
-  if (applyTarget && manualTarget) {
-    applyTarget.addEventListener('click', () => {
-      const v = (manualTarget.value || '').trim();
-      const c = findCountryByName(v);
-      if (c) {
-        game.target = c;
-        updateLabels();
-        renderTexture();
-        statusLabel.textContent = 'Obiettivo impostato.';
-      } else {
-        statusLabel.textContent = 'Nome target non trovato.';
-      }
     });
   }
 
@@ -193,11 +170,44 @@ function setupControls() {
   });
 }
 
+function stopSpeedrunTimer() {
+  if (speedrunTimer) {
+    clearInterval(speedrunTimer);
+    speedrunTimer = null;
+  }
+}
+
+function startSpeedrunTimer() {
+  stopSpeedrunTimer();
+  speedrunTimeLeft = 60;
+  if (timerDisplay) {
+    timerDisplay.classList.remove('hidden', 'warning');
+    timerDisplay.textContent = '⏱ 01:00';
+  }
+
+  speedrunTimer = setInterval(() => {
+    speedrunTimeLeft--;
+    if (timerDisplay) {
+      const secs = speedrunTimeLeft % 60;
+      const secsStr = secs < 10 ? '0' + secs : secs;
+      timerDisplay.textContent = `⏱ 00:${secsStr}`;
+
+      if (speedrunTimeLeft <= 10) timerDisplay.classList.add('warning');
+    }
+
+    if (speedrunTimeLeft <= 0) {
+      stopSpeedrunTimer();
+      statusLabel.textContent = 'Tempo scaduto!';
+      openGameOverlay('defeat');
+    }
+  }, 1000);
+}
+
 function updateAutocompleteSuggestions() {
   if (!suggestionsList || !countryInput) return;
 
   const query = normalizeName(countryInput.value);
-  if (!showSuggestions || !query) {
+  if (!showSuggestions || selectedGameMode === 'hardcore' || !query) {
     suggestionsList.innerHTML = '';
     suggestionsList.classList.add('hidden');
     return;
@@ -275,9 +285,7 @@ function buildCountryMetadata(countryData, geoFeatures) {
     iso3Map.set(iso3, item);
     item.altNames.forEach(alias => {
       const key = normalizeName(alias);
-      if (!nameMap.has(key)) {
-        nameMap.set(key, item);
-      }
+      if (!nameMap.has(key)) nameMap.set(key, item);
     });
     nameMap.set(normalizeName(item.name), item);
   });
@@ -295,18 +303,8 @@ function buildCountryMetadata(countryData, geoFeatures) {
   });
 
   connectIslandsToNearest();
-
   countries = Array.from(iso3Map.values()).filter(country => country.borders.length > 0 && country.feature);
   renderCountries = Array.from(iso3Map.values()).filter(country => country.feature);
-
-  try {
-    const usa = iso3Map.get('USA');
-    const rus = iso3Map.get('RUS');
-    if (usa && rus) {
-      if (!usa.borders.includes('RUS')) usa.borders.push('RUS');
-      if (!rus.borders.includes('USA')) rus.borders.push('USA');
-    }
-  } catch (e) {}
 }
 
 function haversineDistance(p1, p2) {
@@ -377,7 +375,7 @@ function normalizeName(str) {
 function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x101010, 1);
+  renderer.setClearColor(0x06090e, 1);
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(40, 1, 0.1, 2000);
@@ -393,8 +391,8 @@ function initThree() {
   const sphereGeometry = new THREE.SphereGeometry(170, 64, 64);
   globeMaterial = new THREE.MeshPhongMaterial({
     map: new THREE.CanvasTexture(textureCanvas),
-    shininess: 10,
-    specular: 0x444444,
+    shininess: 12,
+    specular: 0x333333,
     flatShading: false
   });
   globe = new THREE.Mesh(sphereGeometry, globeMaterial);
@@ -449,9 +447,7 @@ function mapClientToSphere(clientX, clientY) {
 function onPointerDown(event) {
   isDragging = true;
   hideTooltip();
-  try {
-    canvas.setPointerCapture(event.pointerId);
-  } catch (e) {}
+  try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
   trackStartVec = mapClientToSphere(event.clientX, event.clientY);
   trackStartQuat = globe.quaternion.clone();
 }
@@ -479,9 +475,7 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (event && event.pointerId) {
-    try {
-      canvas.releasePointerCapture(event.pointerId);
-    } catch (e) {}
+    try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
   }
   isDragging = false;
   trackStartVec = null;
@@ -556,11 +550,10 @@ function onWheel(event) {
 
 function renderTexture() {
   textureContext.clearRect(0, 0, textureWidth, textureHeight);
-  textureContext.fillStyle = '#202020';
+  
+  // Colore del mare a contrasto elevato (Blu notte/Oceano scuro)
+  textureContext.fillStyle = '#090d16';
   textureContext.fillRect(0, 0, textureWidth, textureHeight);
-
-  textureContext.lineWidth = 1.0;
-  textureContext.strokeStyle = 'rgba(255,255,255,1)';
 
   geoDrawAllCountries();
   drawIslandConnections();
@@ -582,18 +575,25 @@ function geoDrawAllCountries() {
     const feature = country.feature;
     if (!feature) continue;
 
-    let fillStyle = '#3f3f3f';
+    // Colore terre emerse ad alto contrasto rispetto al mare (#090d16)
+    let fillStyle = '#2d3748';
+    let drawBorder = selectedGameMode !== 'hardcore';
 
-    if (country.code === currentCode) fillStyle = COLOR_CURRENT;
-    else if (country.code === targetCode) fillStyle = COLOR_TARGET;
-    else if (pathIndex.has(country.code)) {
+    if (country.code === currentCode) {
+      fillStyle = COLOR_CURRENT;
+      drawBorder = true;
+    } else if (country.code === targetCode) {
+      fillStyle = COLOR_TARGET;
+      drawBorder = true;
+    } else if (pathIndex.has(country.code)) {
       const idx = pathIndex.get(country.code);
       const last = Math.max(1, (game.path.length - 1));
       const t = idx / last;
       fillStyle = lerpColorRGBA([200,255,180,0.98], [0,200,83,0.98], t);
-    } else fillStyle = '#2f2f2f';
+      drawBorder = true;
+    }
 
-    drawGeoFeature(feature, fillStyle);
+    drawGeoFeature(feature, fillStyle, drawBorder);
   }
 }
 
@@ -602,7 +602,7 @@ function drawIslandConnections() {
   textureContext.save();
   textureContext.setLineDash([6, 7]);
   textureContext.lineWidth = 1.8;
-  textureContext.strokeStyle = 'rgba(255,255,255,0.55)';
+  textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
   islandConnections.forEach(({ a, b }) => {
     const ca = iso3Map.get(a);
     const cb = iso3Map.get(b);
@@ -631,7 +631,7 @@ function lerpColorRGBA(a, b, t) {
   return `rgba(${r},${g},${bl},${alpha})`;
 }
 
-function drawGeoFeature(feature, fillStyle) {
+function drawGeoFeature(feature, fillStyle, drawBorder = true) {
   const geometry = feature.geometry;
   const rings = [];
   if (geometry.type === 'Polygon') {
@@ -653,14 +653,26 @@ function drawGeoFeature(feature, fillStyle) {
   });
   textureContext.fillStyle = fillStyle;
   textureContext.fill();
-  textureContext.save();
-  textureContext.lineWidth = 3.0;
-  textureContext.strokeStyle = 'rgba(0,0,0,0.6)';
-  textureContext.stroke();
-  textureContext.lineWidth = 1.2;
-  textureContext.strokeStyle = 'rgba(255,255,255,1)';
-  textureContext.stroke();
-  textureContext.restore();
+
+  if (drawBorder) {
+    // Bordi visibili (modalità Standard / stati selezionati)
+    textureContext.save();
+    textureContext.lineWidth = 2.5;
+    textureContext.strokeStyle = 'rgba(0,0,0,0.5)';
+    textureContext.stroke();
+    textureContext.lineWidth = 1.0;
+    textureContext.strokeStyle = 'rgba(255,255,255,0.7)';
+    textureContext.stroke();
+    textureContext.restore();
+  } else {
+    // Modalità Hardcore: applica un contorno dello stesso colore dello stato
+    // per eliminare le linee fantasma dovute all'antialiasing del Canvas
+    textureContext.save();
+    textureContext.lineWidth = 2.0;
+    textureContext.strokeStyle = fillStyle;
+    textureContext.stroke();
+    textureContext.restore();
+  }
 }
 
 function unwrapRingLongitudes(ring) {
@@ -851,6 +863,8 @@ function latLonToVector(lonDeg, latDeg) {
 function startNewGame() {
   if (!countries.length) return;
 
+  stopSpeedrunTimer();
+
   let start = null;
   let target = null;
 
@@ -917,6 +931,12 @@ function startNewGame() {
     baseFitDistance = fitDistance;
   }
 
+  if (selectedGameMode === 'speedrun') {
+    startSpeedrunTimer();
+  } else if (timerDisplay) {
+    timerDisplay.classList.add('hidden');
+  }
+
   updateLabels();
   statusLabel.textContent = '';
   renderTexture();
@@ -932,9 +952,7 @@ function centerLonLatWithEquator(lon, lat) {
   const projX = northRotated.x;
   const projY = northRotated.y;
   let phi = 0;
-  if (Math.hypot(projX, projY) > 1e-6) {
-    phi = Math.atan2(projX, projY);
-  }
+  if (Math.hypot(projX, projY) > 1e-6) phi = Math.atan2(projX, projY);
   const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), phi);
   const qf = qz.multiply(q);
 
@@ -1054,6 +1072,7 @@ function submitMove() {
   countryInput.value = '';
 
   if (game.current.code === game.target.code) {
+    stopSpeedrunTimer();
     statusLabel.textContent = 'Obiettivo raggiunto!';
     openGameOverlay('victory');
   } else {
@@ -1072,10 +1091,16 @@ function openGameOverlay(mode) {
     if (victoryMessage) victoryMessage.textContent = `Hai raggiunto ${targetName} partendo da ${startName}. Vuoi giocare un'altra sfida?`;
     if (playAgainButton) playAgainButton.textContent = 'Gioca ancora';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+  } else if (mode === 'defeat') {
+    if (victoryBadge) victoryBadge.textContent = '⏱️';
+    if (victoryTitle) victoryTitle.textContent = 'Tempo Scaduto!';
+    if (victoryMessage) victoryMessage.textContent = 'Non sei riuscito a raggiungere la destinazione in tempo. Riprova!';
+    if (playAgainButton) playAgainButton.textContent = 'Riprova';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
   } else {
     if (victoryBadge) victoryBadge.textContent = '🌍';
     if (victoryTitle) victoryTitle.textContent = 'Nuova partita';
-    if (victoryMessage) victoryMessage.textContent = 'Scegli difficoltà e continente, poi inizia la sfida.';
+    if (victoryMessage) victoryMessage.textContent = 'Scegli la modalità, difficoltà e continente, poi inizia la sfida.';
     if (playAgainButton) playAgainButton.textContent = 'Inizia';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Annulla';
   }

@@ -16,6 +16,7 @@
       <div id="currentBox" class="placeBox">Partenza</div>
       <div id="arrow">→</div>
       <div id="targetBox" class="placeBox">Obiettivo</div>
+      <div id="timerDisplay" class="placeBox timer-box hidden">⏱ 01:00</div>
     </div>
 
     <div id="topRight">
@@ -63,7 +64,17 @@
       <div id="victoryBadge" class="overlay-badge">🏆</div>
       <h1 id="victoryTitle">Hai vinto!</h1>
       <p id="victoryMessage">Hai completato la sfida con successo.</p>
+      
       <div class="overlay-controls">
+        <div class="overlay-section">
+          <label>Modalità di Gioco</label>
+          <div class="choice-row" data-choice-group="mode">
+            <button class="small active" data-mode="standard" title="Classico">Standard 🎮</button>
+            <button class="small" data-mode="speedrun" title="60 secondi per vincere">Speedrun ⚡</button>
+            <button class="small" data-mode="hardcore" title="Senza bordi né aiuti">Hardcore 💀</button>
+          </div>
+        </div>
+
         <div class="overlay-section">
           <label>Difficoltà</label>
           <div class="choice-row" data-choice-group="difficulty">
@@ -72,6 +83,7 @@
             <button class="small" data-diff="hard" title="Difficile">★★★</button>
           </div>
         </div>
+
         <div class="overlay-section">
           <label>Continente</label>
           <div class="choice-row" data-choice-group="continent">
@@ -84,6 +96,7 @@
           </div>
         </div>
       </div>
+
       <div class="overlay-actions">
         <button id="playAgainButton" class="primary">Gioca ancora</button>
         <button id="closeVictoryButton" class="secondary">Chiudi</button>
