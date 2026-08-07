@@ -51,7 +51,7 @@ let game = null;
 let isDragging = false;
 let showSuggestions = false;
 let overlayMode = 'setup';
-let selectedGameMode = 'standard'; // 'standard' | 'speedrun' | 'hardcore' | 'fog'
+let selectedGameMode = 'standard';
 let speedrunTimer = null;
 let speedrunTimeLeft = 60;
 
@@ -63,6 +63,10 @@ let viewAnim = null;
 let islandConnections = [];
 let trackStartVec = null;
 let trackStartQuat = null;
+
+// Gestione Touch & Pinch-to-Zoom
+const activePointers = new Map();
+let prevTouchDiff = -1;
 
 const raycaster = new THREE.Raycaster();
 
@@ -252,11 +256,6 @@ function startNewGame() {
   if (game.start && game.start.feature) {
     const c = computeFeatureCentroid(game.start.feature);
     centerLonLatWithEquator(c.lon, c.lat);
-    const fovRad = (camera.fov * Math.PI) / 180;
-    const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.02;
-    zoomMinZ = fitDistance * 0.45;
-    zoomMaxZ = fitDistance * 3.5;
-    baseFitDistance = fitDistance;
   }
 
   if (selectedGameMode === 'speedrun') {
@@ -539,12 +538,6 @@ function initThree() {
   window.addEventListener('resize', resize);
   resize();
 
-  const fovRad = (camera.fov * Math.PI) / 180;
-  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.05;
-  zoomMinZ = fitDistance * 0.45;
-  zoomMaxZ = fitDistance * 3.5;
-  baseFitDistance = fitDistance;
-
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointermove', onCanvasHover);
@@ -566,6 +559,22 @@ function resize() {
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+
+  const fovRad = (camera.fov * Math.PI) / 180;
+  let fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.05;
+  
+  // Se lo schermo è in Portrait (mobile), scala la distanza della camera per far stare il globo nello schermo
+  if (camera.aspect < 1) {
+    fitDistance /= camera.aspect;
+  }
+
+  zoomMinZ = fitDistance * 0.40;
+  zoomMaxZ = fitDistance * 3.5;
+  baseFitDistance = fitDistance;
+
+  if (camera.position.z < fitDistance) {
+    camera.position.z = fitDistance;
+  }
 }
 
 function animate() {
@@ -601,9 +610,7 @@ function centerLonLatWithEquator(lon, lat) {
   const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), phi);
   const qf = qz.multiply(q);
 
-  const fovRad = (camera.fov * Math.PI) / 180;
-  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.02;
-  const targetZ = Math.max(camera.position.z || fitDistance, fitDistance * 0.7);
+  const targetZ = Math.max(camera.position.z || baseFitDistance, baseFitDistance * 0.7);
 
   startViewAnimation(qf, targetZ, 650);
 }
@@ -665,14 +672,38 @@ function mapClientToSphere(clientX, clientY) {
 }
 
 function onPointerDown(event) {
-  isDragging = true;
-  hideTooltip();
-  try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
-  trackStartVec = mapClientToSphere(event.clientX, event.clientY);
-  trackStartQuat = globe.quaternion.clone();
+  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (activePointers.size === 1) {
+    isDragging = true;
+    hideTooltip();
+    try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
+    trackStartVec = mapClientToSphere(event.clientX, event.clientY);
+    trackStartQuat = globe.quaternion.clone();
+  }
 }
 
 function onPointerMove(event) {
+  if (activePointers.has(event.pointerId)) {
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+
+  // --- GESTIONE PINCH TO ZOOM (2 DITA SU MOBILE) ---
+  if (activePointers.size === 2) {
+    isDragging = false;
+    const pts = Array.from(activePointers.values());
+    const curDiff = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+
+    if (prevTouchDiff > 0) {
+      const delta = prevTouchDiff - curDiff;
+      camera.position.z += delta * 1.4;
+      camera.position.z = Math.max(zoomMinZ, Math.min(zoomMaxZ, camera.position.z));
+    }
+    prevTouchDiff = curDiff;
+    return;
+  }
+
+  // --- TRASCINAMENTO STANDARD (1 DITO / MOUSE) ---
   if (!isDragging || !trackStartVec) return;
   const currentVec = mapClientToSphere(event.clientX, event.clientY);
 
@@ -694,12 +725,18 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
-  if (event && event.pointerId) {
-    try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
+  activePointers.delete(event.pointerId);
+  if (activePointers.size < 2) {
+    prevTouchDiff = -1;
   }
-  isDragging = false;
-  trackStartVec = null;
-  trackStartQuat = null;
+  if (activePointers.size === 0) {
+    if (event && event.pointerId) {
+      try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
+    }
+    isDragging = false;
+    trackStartVec = null;
+    trackStartQuat = null;
+  }
 }
 
 function onWheel(event) {
@@ -761,7 +798,6 @@ function getColoredCountries() {
 function renderTexture() {
   textureContext.clearRect(0, 0, textureWidth, textureHeight);
   
-  // Colore del mare a contrasto elevato (Blu notte/Oceano scuro)
   textureContext.fillStyle = '#090d16';
   textureContext.fillRect(0, 0, textureWidth, textureHeight);
 
@@ -789,7 +825,6 @@ function geoDrawAllCountries() {
     const isTarget = country.code === targetCode;
     const isVisited = pathIndex.has(country.code);
 
-    // Modalità Nebbia di Guerra: mostra solo partenza, obiettivo e già visitati
     if (selectedGameMode === 'fog' && !isCurrent && !isTarget && !isVisited) {
       continue;
     }
@@ -848,7 +883,6 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true) {
     textureContext.stroke();
     textureContext.restore();
   } else {
-    // Hardcore: contorno dello stesso colore dello stato per prevenire linee fantasma
     textureContext.save();
     textureContext.lineWidth = 2.0;
     textureContext.strokeStyle = fillStyle;
