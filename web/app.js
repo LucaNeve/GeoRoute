@@ -1,5 +1,8 @@
 import * as THREE from './vendor/three.module.min.js';
 
+/* ==========================================================================
+   1. DOM ELEMENTS
+   ========================================================================== */
 const canvas = document.getElementById('globeCanvas');
 const currentBox = document.getElementById('currentBox');
 const targetBox = document.getElementById('targetBox');
@@ -20,11 +23,19 @@ const closeVictoryButton = document.getElementById('closeVictoryButton');
 const countryTooltip = document.getElementById('countryTooltip');
 const timerDisplay = document.getElementById('timerDisplay');
 
+/* ==========================================================================
+   2. CONSTANTS & GLOBAL STATE
+   ========================================================================== */
+const COLOR_CURRENT = 'rgba(0, 200, 83, 0.98)';
+const COLOR_TARGET = 'rgba(220, 20, 60, 0.98)';
+const MICROSTATE_ISO3 = new Set(['MCO', 'SMR', 'VAT', 'LIE', 'AND', 'MLT']);
+
 const textureWidth = 4096;
 const textureHeight = 2048;
 const textureCanvas = document.createElement('canvas');
 textureCanvas.width = textureWidth;
 textureCanvas.height = textureHeight;
+
 const textureContext = textureCanvas.getContext('2d');
 textureContext.imageSmoothingEnabled = true;
 textureContext.lineJoin = 'round';
@@ -40,7 +51,7 @@ let game = null;
 let isDragging = false;
 let showSuggestions = false;
 let overlayMode = 'setup';
-let selectedGameMode = 'standard'; // 'standard' | 'speedrun' | 'hardcore'
+let selectedGameMode = 'standard'; // 'standard' | 'speedrun' | 'hardcore' | 'fog'
 let speedrunTimer = null;
 let speedrunTimeLeft = 60;
 
@@ -50,10 +61,14 @@ let zoomMaxZ = 900;
 let baseFitDistance = null;
 let viewAnim = null;
 let islandConnections = [];
+let trackStartVec = null;
+let trackStartQuat = null;
+
 const raycaster = new THREE.Raycaster();
 
-function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
-
+/* ==========================================================================
+   3. INITIALIZATION & CONTROLS SETUP
+   ========================================================================== */
 Promise.all([
   fetch('data/countries-110m.json').then(res => res.json()),
   fetch('data/countries.json').then(res => res.json())
@@ -71,25 +86,6 @@ function initialize([topology, countryData]) {
   document.title = 'GeoRoute';
   startNewGame();
   animate();
-}
-
-function setActiveMode(mode) {
-  selectedGameMode = mode;
-  document.querySelectorAll('[data-mode]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === mode);
-  });
-}
-
-function setActiveDifficulty(diff) {
-  document.querySelectorAll('[data-diff]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.diff === diff);
-  });
-}
-
-function setActiveContinent(continent) {
-  document.querySelectorAll('[data-cont]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.cont === continent);
-  });
 }
 
 function setupControls() {
@@ -153,7 +149,7 @@ function setupControls() {
     alignButton.addEventListener('click', () => {
       if (!globe) return;
       const invQ = globe.quaternion.clone().invert();
-      const localCenter = new THREE.Vector3(0,0,1).applyQuaternion(invQ);
+      const localCenter = new THREE.Vector3(0, 0, 1).applyQuaternion(invQ);
       const ll = vectorToLatLon(localCenter);
       centerLonLatWithEquator(ll.lon, ll.lat);
     });
@@ -170,696 +166,28 @@ function setupControls() {
   });
 }
 
-function stopSpeedrunTimer() {
-  if (speedrunTimer) {
-    clearInterval(speedrunTimer);
-    speedrunTimer = null;
-  }
-}
-
-function startSpeedrunTimer() {
-  stopSpeedrunTimer();
-  speedrunTimeLeft = 60;
-  if (timerDisplay) {
-    timerDisplay.classList.remove('hidden', 'warning');
-    timerDisplay.textContent = '⏱ 01:00';
-  }
-
-  speedrunTimer = setInterval(() => {
-    speedrunTimeLeft--;
-    if (timerDisplay) {
-      const secs = speedrunTimeLeft % 60;
-      const secsStr = secs < 10 ? '0' + secs : secs;
-      timerDisplay.textContent = `⏱ 00:${secsStr}`;
-
-      if (speedrunTimeLeft <= 10) timerDisplay.classList.add('warning');
-    }
-
-    if (speedrunTimeLeft <= 0) {
-      stopSpeedrunTimer();
-      statusLabel.textContent = 'Tempo scaduto!';
-      openGameOverlay('defeat');
-    }
-  }, 1000);
-}
-
-function updateAutocompleteSuggestions() {
-  if (!suggestionsList || !countryInput) return;
-
-  const query = normalizeName(countryInput.value);
-  if (!showSuggestions || selectedGameMode === 'hardcore' || !query) {
-    suggestionsList.innerHTML = '';
-    suggestionsList.classList.add('hidden');
-    return;
-  }
-
-  suggestionsList.innerHTML = '';
-  const candidates = [];
-  const added = new Set();
-
-  if (game && game.current && Array.isArray(game.current.borders)) {
-    game.current.borders.forEach(borderCode => {
-      const borderCountry = iso3Map.get(borderCode);
-      if (borderCountry && !added.has(borderCountry.name)) {
-        if (normalizeName(borderCountry.name).includes(query)) {
-          candidates.push(borderCountry);
-          added.add(borderCountry.name);
-        }
-      }
-    });
-  }
-
-  countries.forEach(c => {
-    if (!added.has(c.name) && normalizeName(c.name).includes(query)) {
-      candidates.push(c);
-      added.add(c.name);
-    }
-  });
-
-  if (candidates.length === 0) {
-    suggestionsList.classList.add('hidden');
-    return;
-  }
-
-  candidates.slice(0, 5).forEach(c => {
-    const item = document.createElement('div');
-    item.className = 'suggestion-item';
-    item.textContent = c.name;
-    item.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      countryInput.value = c.name;
-      suggestionsList.classList.add('hidden');
-      submitMove();
-    });
-    suggestionsList.appendChild(item);
-  });
-
-  suggestionsList.classList.remove('hidden');
-}
-
-function doUndo() {
-  if (!game || !game.path || game.path.length <= 1) return;
-  const removed = game.path.pop();
-  game.visited.delete(removed);
-  const last = game.path[game.path.length - 1];
-  game.current = iso3Map.get(last);
-  updateLabels();
-  renderTexture();
-}
-
-function buildCountryMetadata(countryData, geoFeatures) {
-  countryData.forEach(country => {
-    if (!country.cca3 || !country.ccn3) return;
-    const iso3 = country.cca3;
-    const numericId = Number(country.ccn3);
-    const region = country.region || (Array.isArray(country.continents) ? country.continents[0] : 'Unknown');
-    const item = {
-      name: country.name && country.name.common ? country.name.common : iso3,
-      code: iso3,
-      borders: country.borders || [],
-      altNames: buildAliases(country),
-      numericId,
-      region,
-      feature: null
-    };
-    iso3Map.set(iso3, item);
-    item.altNames.forEach(alias => {
-      const key = normalizeName(alias);
-      if (!nameMap.has(key)) nameMap.set(key, item);
-    });
-    nameMap.set(normalizeName(item.name), item);
-  });
-
-  geoFeatures.forEach(feature => {
-    const id = Number(feature.id);
-    if (!Number.isFinite(id)) return;
-    for (const country of iso3Map.values()) {
-      if (country.numericId === id) {
-        country.feature = feature;
-        featureByIso.set(country.code, feature);
-        break;
-      }
-    }
-  });
-
-  connectIslandsToNearest();
-  countries = Array.from(iso3Map.values()).filter(country => country.borders.length > 0 && country.feature);
-  renderCountries = Array.from(iso3Map.values()).filter(country => country.feature);
-}
-
-function haversineDistance(p1, p2) {
-  const R = 6371;
-  const dLat = (p2.lat - p1.lat) * Math.PI / 180;
-  const dLon = (p2.lon - p1.lon) * Math.PI / 180;
-  const lat1 = p1.lat * Math.PI / 180;
-  const lat2 = p2.lat * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function connectIslandsToNearest() {
-  islandConnections = [];
-  const withFeature = Array.from(iso3Map.values()).filter(c => c.feature);
-  const islands = withFeature.filter(c => c.borders.length === 0);
-  islands.forEach(island => {
-    const centroidA = computeFeatureCentroid(island.feature);
-    let best = null;
-    let bestDist = Infinity;
-    withFeature.forEach(other => {
-      if (other.code === island.code) return;
-      const centroidB = computeFeatureCentroid(other.feature);
-      const d = haversineDistance(centroidA, centroidB);
-      if (d < bestDist) {
-        bestDist = d;
-        best = other;
-      }
-    });
-    if (best) {
-      if (!island.borders.includes(best.code)) island.borders.push(best.code);
-      if (!best.borders.includes(island.code)) best.borders.push(island.code);
-      islandConnections.push({ a: island.code, b: best.code });
-    }
+function setActiveMode(mode) {
+  selectedGameMode = mode;
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
   });
 }
 
-function buildAliases(country) {
-  const aliases = [];
-  if (country.name && country.name.common) aliases.push(country.name.common);
-  if (country.name && country.name.official && country.name.official !== country.name.common) aliases.push(country.name.official);
-  if (country.translations && country.translations.ita) {
-    const t = country.translations.ita;
-    if (t.common) aliases.push(t.common);
-    if (t.official && t.official !== t.common) aliases.push(t.official);
-  }
-  if (Array.isArray(country.altSpellings)) {
-    country.altSpellings.forEach(alias => {
-      if (typeof alias === 'string' && alias.trim()) aliases.push(alias);
-    });
-  }
-  if (country.cca2) aliases.push(country.cca2);
-  if (country.ccn3) aliases.push(String(country.ccn3));
-  if (country.cca3) aliases.push(country.cca3);
-  return aliases;
-}
-
-function normalizeName(str) {
-  if (!str || typeof str !== 'string') return '';
-  return str.trim().toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/["'‘’‚,\.\-\/\(\)]/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-function initThree() {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setClearColor(0x06090e, 1);
-
-  scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 2000);
-  camera.position.set(0, 0, 480);
-
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
-  scene.add(ambientLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.95);
-  directionalLight.position.set(1, 2, 1);
-  scene.add(directionalLight);
-
-  const sphereGeometry = new THREE.SphereGeometry(170, 64, 64);
-  globeMaterial = new THREE.MeshPhongMaterial({
-    map: new THREE.CanvasTexture(textureCanvas),
-    shininess: 12,
-    specular: 0x333333,
-    flatShading: false
-  });
-  globe = new THREE.Mesh(sphereGeometry, globeMaterial);
-  scene.add(globe);
-
-  sphereRadius = sphereGeometry.parameters.radius;
-
-  window.addEventListener('resize', resize);
-  resize();
-
-  const fovRad = (camera.fov * Math.PI) / 180;
-  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.05;
-  zoomMinZ = fitDistance * 0.45;
-  zoomMaxZ = fitDistance * 3.5;
-  baseFitDistance = fitDistance;
-
-  canvas.addEventListener('pointerdown', onPointerDown);
-  canvas.addEventListener('pointermove', onPointerMove);
-  canvas.addEventListener('pointermove', onCanvasHover);
-  canvas.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('pointercancel', onPointerUp);
-  canvas.addEventListener('pointerleave', onPointerUp);
-  canvas.addEventListener('pointerleave', hideTooltip);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
-
-  submitButton.addEventListener('click', submitMove);
-  countryInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') submitMove();
+function setActiveDifficulty(diff) {
+  document.querySelectorAll('[data-diff]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.diff === diff);
   });
 }
 
-function resize() {
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  renderer.setSize(width, height, false);
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
-}
-
-let trackStartVec = null;
-let trackStartQuat = null;
-
-function mapClientToSphere(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
-  const length2 = x * x + y * y;
-  const z = length2 <= 1 ? Math.sqrt(1 - length2) : 0;
-  return new THREE.Vector3(x, y, z).normalize();
-}
-
-function onPointerDown(event) {
-  isDragging = true;
-  hideTooltip();
-  try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
-  trackStartVec = mapClientToSphere(event.clientX, event.clientY);
-  trackStartQuat = globe.quaternion.clone();
-}
-
-function onPointerMove(event) {
-  if (!isDragging || !trackStartVec) return;
-  const currentVec = mapClientToSphere(event.clientX, event.clientY);
-
-  const axis = new THREE.Vector3().crossVectors(trackStartVec, currentVec);
-  const dot = Math.max(-1, Math.min(1, trackStartVec.dot(currentVec)));
-  let angle = Math.acos(dot);
-  if (axis.lengthSq() < 1e-8 || isNaN(angle)) return;
-  axis.normalize();
-
-  if (baseFitDistance && camera && camera.position) {
-    let scale = camera.position.z / baseFitDistance;
-    scale = Math.max(0.15, Math.min(1.2, scale));
-    angle = angle * scale;
-  }
-
-  const q = new THREE.Quaternion();
-  q.setFromAxisAngle(axis, angle);
-  globe.quaternion.copy(q.multiply(trackStartQuat));
-}
-
-function onPointerUp(event) {
-  if (event && event.pointerId) {
-    try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
-  }
-  isDragging = false;
-  trackStartVec = null;
-  trackStartQuat = null;
-}
-
-function getColoredCountries() {
-  if (!game) return [];
-  const codes = new Set(game.path || []);
-  if (game.target) codes.add(game.target.code);
-  const list = [];
-  codes.forEach(code => {
-    const c = iso3Map.get(code);
-    if (c && c.feature) list.push(c);
+function setActiveContinent(continent) {
+  document.querySelectorAll('[data-cont]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cont === continent);
   });
-  return list;
 }
 
-function onCanvasHover(event) {
-  if (isDragging || !game || !globe || !camera) {
-    hideTooltip();
-    return;
-  }
-  const rect = canvas.getBoundingClientRect();
-  const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  const ndcY = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
-  raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
-  const hits = raycaster.intersectObject(globe);
-  if (!hits.length) {
-    hideTooltip();
-    return;
-  }
-  const worldPoint = hits[0].point.clone().normalize();
-  const invQ = globe.quaternion.clone().invert();
-  const localPoint = worldPoint.applyQuaternion(invQ);
-  const ll = vectorToLatLon(localPoint);
-
-  const candidates = getColoredCountries();
-  let found = null;
-  for (const country of candidates) {
-    if (pointInFeatureLatLon(ll.lon, ll.lat, country.feature)) {
-      found = country;
-      break;
-    }
-  }
-
-  if (found) showTooltip(event.clientX, event.clientY, found.name);
-  else hideTooltip();
-}
-
-function showTooltip(x, y, text) {
-  if (!countryTooltip) return;
-  countryTooltip.textContent = text;
-  countryTooltip.style.left = `${x}px`;
-  countryTooltip.style.top = `${y}px`;
-  countryTooltip.classList.remove('hidden');
-}
-
-function hideTooltip() {
-  if (!countryTooltip) return;
-  countryTooltip.classList.add('hidden');
-}
-
-function onWheel(event) {
-  event.preventDefault();
-  if (!camera) return;
-  const delta = event.deltaY;
-  const zoomSpeed = 0.45;
-  camera.position.z += delta * zoomSpeed;
-  camera.position.z = Math.max(zoomMinZ, Math.min(zoomMaxZ, camera.position.z));
-}
-
-function renderTexture() {
-  textureContext.clearRect(0, 0, textureWidth, textureHeight);
-  
-  // Colore del mare a contrasto elevato (Blu notte/Oceano scuro)
-  textureContext.fillStyle = '#090d16';
-  textureContext.fillRect(0, 0, textureWidth, textureHeight);
-
-  geoDrawAllCountries();
-  drawIslandConnections();
-  drawSmallCountryDots();
-
-  if (globeMaterial && globeMaterial.map) globeMaterial.map.needsUpdate = true;
-}
-
-function geoDrawAllCountries() {
-  const currentCode = game?.current.code;
-  const targetCode = game?.target.code;
-
-  const pathIndex = new Map();
-  if (game && Array.isArray(game.path)) {
-    game.path.forEach((code, i) => pathIndex.set(code, i));
-  }
-
-  for (const country of renderCountries) {
-    const feature = country.feature;
-    if (!feature) continue;
-
-    // Colore terre emerse ad alto contrasto rispetto al mare (#090d16)
-    let fillStyle = '#2d3748';
-    let drawBorder = selectedGameMode !== 'hardcore';
-
-    if (country.code === currentCode) {
-      fillStyle = COLOR_CURRENT;
-      drawBorder = true;
-    } else if (country.code === targetCode) {
-      fillStyle = COLOR_TARGET;
-      drawBorder = true;
-    } else if (pathIndex.has(country.code)) {
-      const idx = pathIndex.get(country.code);
-      const last = Math.max(1, (game.path.length - 1));
-      const t = idx / last;
-      fillStyle = lerpColorRGBA([200,255,180,0.98], [0,200,83,0.98], t);
-      drawBorder = true;
-    }
-
-    drawGeoFeature(feature, fillStyle, drawBorder);
-  }
-}
-
-function drawIslandConnections() {
-  if (!islandConnections.length) return;
-  textureContext.save();
-  textureContext.setLineDash([6, 7]);
-  textureContext.lineWidth = 1.8;
-  textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
-  islandConnections.forEach(({ a, b }) => {
-    const ca = iso3Map.get(a);
-    const cb = iso3Map.get(b);
-    if (!ca?.feature || !cb?.feature) return;
-    const p1 = computeFeatureCentroid(ca.feature);
-    const p2 = computeFeatureCentroid(cb.feature);
-    let lon2 = p2.lon;
-    if (Math.abs(lon2 - p1.lon) > 180) {
-      lon2 += (lon2 < p1.lon) ? 360 : -360;
-    }
-    const [x1, y1] = projectPoint([p1.lon, p1.lat]);
-    const [x2, y2] = projectPoint([lon2, p2.lat]);
-    textureContext.beginPath();
-    textureContext.moveTo(x1, y1);
-    textureContext.lineTo(x2, y2);
-    textureContext.stroke();
-  });
-  textureContext.restore();
-}
-
-function lerpColorRGBA(a, b, t) {
-  const r = Math.round(a[0] + (b[0] - a[0]) * t);
-  const g = Math.round(a[1] + (b[1] - a[1]) * t);
-  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
-  const alpha = (a[3] + (b[3] - a[3]) * t);
-  return `rgba(${r},${g},${bl},${alpha})`;
-}
-
-function drawGeoFeature(feature, fillStyle, drawBorder = true) {
-  const geometry = feature.geometry;
-  const rings = [];
-  if (geometry.type === 'Polygon') {
-    geometry.coordinates.forEach(ring => rings.push(ring));
-  } else if (geometry.type === 'MultiPolygon') {
-    geometry.coordinates.forEach(polygon => polygon.forEach(ring => rings.push(ring)));
-  }
-
-  const unwrappedRings = rings.map(unwrapRingLongitudes);
-  const needsWrap = unwrappedRings.some(pts => {
-    const lons = pts.map(p => p[0]);
-    return Math.min(...lons) < -180 || Math.max(...lons) > 180;
-  });
-  const lonOffsets = needsWrap ? [-360, 0, 360] : [0];
-
-  textureContext.beginPath();
-  lonOffsets.forEach(offset => {
-    unwrappedRings.forEach(pts => drawRing(pts, offset));
-  });
-  textureContext.fillStyle = fillStyle;
-  textureContext.fill();
-
-  if (drawBorder) {
-    // Bordi visibili (modalità Standard / stati selezionati)
-    textureContext.save();
-    textureContext.lineWidth = 2.5;
-    textureContext.strokeStyle = 'rgba(0,0,0,0.5)';
-    textureContext.stroke();
-    textureContext.lineWidth = 1.0;
-    textureContext.strokeStyle = 'rgba(255,255,255,0.7)';
-    textureContext.stroke();
-    textureContext.restore();
-  } else {
-    // Modalità Hardcore: applica un contorno dello stesso colore dello stato
-    // per eliminare le linee fantasma dovute all'antialiasing del Canvas
-    textureContext.save();
-    textureContext.lineWidth = 2.0;
-    textureContext.strokeStyle = fillStyle;
-    textureContext.stroke();
-    textureContext.restore();
-  }
-}
-
-function unwrapRingLongitudes(ring) {
-  if (!ring || !ring.length) return [];
-  const out = [];
-  let prevLon = null;
-  let offset = 0;
-  for (let i = 0; i < ring.length; i++) {
-    let [lon, lat] = ring[i];
-    while (lon > 180) lon -= 360;
-    while (lon < -180) lon += 360;
-    if (prevLon !== null) {
-      const diff = lon - prevLon;
-      if (diff > 180) offset -= 360;
-      else if (diff < -180) offset += 360;
-    }
-    out.push([lon + offset, lat]);
-    prevLon = lon;
-  }
-  return out;
-}
-
-function drawRing(points, lonOffset = 0) {
-  if (!points || points.length === 0) return;
-  let started = false;
-  for (let i = 0; i < points.length; i++) {
-    const [lon, lat] = points[i];
-    const [x, y] = projectPoint([lon + lonOffset, lat]);
-    if (!started) {
-      textureContext.moveTo(x, y);
-      started = true;
-    } else {
-      textureContext.lineTo(x, y);
-    }
-  }
-  try { textureContext.closePath(); } catch (e) {}
-}
-
-const MICROSTATE_ISO3 = new Set(['MCO','SMR','VAT','LIE','AND','MLT']);
-
-function drawSmallCountryDots() {
-  if (!game) return;
-  const currentCode = game.current?.code;
-  const targetCode = game.target?.code;
-  if (currentCode) drawMicroMarkerIfNeeded(currentCode, COLOR_CURRENT);
-  if (targetCode && targetCode !== currentCode) drawMicroMarkerIfNeeded(targetCode, COLOR_TARGET);
-}
-
-function drawMicroMarkerIfNeeded(code, color) {
-  const country = iso3Map.get(code);
-  if (!country || !country.feature) return;
-  const bounds = computeFeaturePixelBounds(country.feature);
-  if (!bounds) return;
-  const w = bounds.maxX - bounds.minX;
-  const h = bounds.maxY - bounds.minY;
-  const pixelThreshold = 12;
-  const isMicro = MICROSTATE_ISO3.has(code);
-  if (isMicro || Math.max(w, h) <= pixelThreshold) {
-    const c = computeFeatureCentroid(country.feature);
-    const [cx, cy] = projectPoint([c.lon, c.lat]);
-
-    textureContext.beginPath();
-    textureContext.arc(cx, cy, 34, 0, Math.PI * 2);
-    textureContext.fillStyle = color.replace(/,[\d.]+\)$/, ',0.28)');
-    textureContext.fill();
-
-    textureContext.beginPath();
-    const r = 20;
-    textureContext.arc(cx, cy, r, 0, Math.PI * 2);
-    textureContext.fillStyle = color;
-    textureContext.fill();
-    textureContext.lineWidth = 3;
-    textureContext.strokeStyle = 'rgba(255,255,255,0.98)';
-    textureContext.stroke();
-  }
-}
-
-function computeFeaturePixelBounds(feature) {
-  if (!feature || !feature.geometry) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const geom = feature.geometry;
-  function addPoint(lon, lat) {
-    if (lon > 180) lon -= 360;
-    if (lon < -180) lon += 360;
-    const [x, y] = projectPoint([lon, lat]);
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
-  }
-  if (geom.type === 'Polygon') {
-    geom.coordinates.forEach(ring => ring.forEach(([lon, lat]) => addPoint(lon, lat)));
-  } else if (geom.type === 'MultiPolygon') {
-    geom.coordinates.forEach(polygon => polygon.forEach(ring => ring.forEach(([lon, lat]) => addPoint(lon, lat))));
-  }
-  if (!isFinite(minX)) return null;
-  return { minX, minY, maxX, maxY };
-}
-
-function projectPoint([lon, lat]) {
-  return [
-    ((lon + 180) / 360) * textureWidth,
-    ((90 - lat) / 180) * textureHeight
-  ];
-}
-
-function computeReachableWithDistance(start) {
-  const dist = new Map();
-  const queue = [start];
-  dist.set(start.code, 0);
-  while (queue.length) {
-    const cur = queue.shift();
-    const d = dist.get(cur.code);
-    for (const b of cur.borders) {
-      const neigh = iso3Map.get(b);
-      if (!neigh) continue;
-      if (!dist.has(neigh.code)) {
-        dist.set(neigh.code, d + 1);
-        queue.push(neigh);
-      }
-    }
-  }
-  return dist;
-}
-
-function computeFeatureCentroid(feature) {
-  if (!feature || !feature.geometry) return { lon: 0, lat: 0 };
-  const geom = feature.geometry;
-
-  function polygonOuterCentroid(ring) {
-    let sx = 0, sy = 0, n = 0;
-    ring.forEach(([lon, lat]) => {
-      if (lon > 180) lon -= 360;
-      if (lon < -180) lon += 360;
-      sx += lon; sy += lat; n += 1;
-    });
-    if (n === 0) return null;
-    return { lon: sx / n, lat: sy / n };
-  }
-
-  function polygonArea(ring) {
-    let area = 0;
-    for (let i = 0; i < ring.length; i++) {
-      const [x1, y1] = ring[i];
-      const [x2, y2] = ring[(i + 1) % ring.length];
-      let ax = x1, bx = x2;
-      if (ax > 180) ax -= 360;
-      if (bx > 180) bx -= 360;
-      area += (ax * y2 - bx * y1);
-    }
-    return Math.abs(area) / 2;
-  }
-
-  let bestCentroid = null;
-  let bestArea = -1;
-
-  if (geom.type === 'Polygon') {
-    const outer = geom.coordinates[0] || [];
-    bestArea = polygonArea(outer);
-    bestCentroid = polygonOuterCentroid(outer);
-  } else if (geom.type === 'MultiPolygon') {
-    for (const polygon of geom.coordinates) {
-      const outer = polygon[0] || [];
-      const a = polygonArea(outer);
-      if (a > bestArea) {
-        bestArea = a;
-        bestCentroid = polygonOuterCentroid(outer);
-      }
-    }
-  }
-
-  if (!bestCentroid) return { lon: 0, lat: 0 };
-  let lon = bestCentroid.lon;
-  if (lon > 180) lon -= 360;
-  if (lon < -180) lon += 360;
-  return { lon, lat: bestCentroid.lat };
-}
-
-function latLonToVector(lonDeg, latDeg) {
-  const phi = (90 - latDeg) * Math.PI / 180;
-  const theta = (lonDeg + 180) * Math.PI / 180;
-  const x = -Math.sin(phi) * Math.cos(theta);
-  const z = Math.sin(phi) * Math.sin(theta);
-  const y = Math.cos(phi);
-  return new THREE.Vector3(x, y, z).normalize();
-}
-
+/* ==========================================================================
+   4. GAME LOGIC & TIMER
+   ========================================================================== */
 function startNewGame() {
   if (!countries.length) return;
 
@@ -942,94 +270,6 @@ function startNewGame() {
   renderTexture();
 }
 
-function centerLonLatWithEquator(lon, lat) {
-  if (typeof lon !== 'number' || typeof lat !== 'number') return;
-  const v = latLonToVector(lon, lat);
-  const q = new THREE.Quaternion().setFromUnitVectors(v, new THREE.Vector3(0, 0, 1));
-
-  const northVec = latLonToVector(0, 90);
-  const northRotated = northVec.clone().applyQuaternion(q);
-  const projX = northRotated.x;
-  const projY = northRotated.y;
-  let phi = 0;
-  if (Math.hypot(projX, projY) > 1e-6) phi = Math.atan2(projX, projY);
-  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), phi);
-  const qf = qz.multiply(q);
-
-  const fovRad = (camera.fov * Math.PI) / 180;
-  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.02;
-  const targetZ = Math.max(camera.position.z || fitDistance, fitDistance * 0.7);
-
-  startViewAnimation(qf, targetZ, 650);
-}
-
-function centerOnCountry(country) {
-  if (!country || !country.feature) return;
-  const c = computeFeatureCentroid(country.feature);
-  centerLonLatWithEquator(c.lon, c.lat);
-}
-
-function centerOnCountryKeepView(country) {
-  if (!country || !country.feature || !globe) return;
-  const c = computeFeatureCentroid(country.feature);
-  const v = latLonToVector(c.lon, c.lat);
-  const qAlign = new THREE.Quaternion().setFromUnitVectors(v, new THREE.Vector3(0,0,1));
-
-  const northVec = latLonToVector(0,90);
-  const northAfter = northVec.clone().applyQuaternion(qAlign);
-  const angleAfter = Math.atan2(northAfter.x, northAfter.y);
-
-  const northCurrent = northVec.clone().applyQuaternion(globe.quaternion);
-  const currentAngle = Math.atan2(northCurrent.x, northCurrent.y);
-
-  const delta = currentAngle - angleAfter;
-  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), delta);
-  const qFinal = qz.multiply(qAlign);
-
-  startViewAnimation(qFinal, camera.position.z, 600);
-}
-
-const COLOR_CURRENT = 'rgba(0,200,83,0.98)';
-const COLOR_TARGET = 'rgba(220,20,60,0.98)';
-
-function updateLabels() {
-  if (!game) return;
-  if (currentBox) {
-    currentBox.textContent = game.start.name || 'Partenza';
-    currentBox.style.background = COLOR_CURRENT;
-  }
-  if (targetBox) {
-    targetBox.textContent = game.target.name || 'Obiettivo';
-    targetBox.style.background = COLOR_TARGET;
-  }
-
-  const sidebar = document.getElementById('timelineSidebar');
-  if (sidebar) {
-    sidebar.innerHTML = '';
-    (game.path || []).forEach((code, idx) => {
-      const c = iso3Map.get(code);
-      const item = document.createElement('div');
-      item.className = 'timeline-item';
-      const dot = document.createElement('div');
-      dot.className = 'dot';
-      if (idx === 0) dot.style.background = COLOR_CURRENT;
-      else if (code === game.target.code) dot.style.background = COLOR_TARGET;
-      else dot.style.background = 'rgba(255,255,255,0.15)';
-      const label = document.createElement('div');
-      label.className = 'label';
-      label.textContent = c ? c.name : code;
-      item.appendChild(dot);
-      item.appendChild(label);
-      item.addEventListener('click', () => {
-        if (c && c.feature) centerOnCountry(c);
-      });
-      sidebar.appendChild(item);
-    });
-  }
-
-  updateAutocompleteSuggestions();
-}
-
 function submitMove() {
   const text = (countryInput.value || '').trim();
   if (!text || !game) return;
@@ -1080,6 +320,49 @@ function submitMove() {
   }
 }
 
+function doUndo() {
+  if (!game || !game.path || game.path.length <= 1) return;
+  const removed = game.path.pop();
+  game.visited.delete(removed);
+  const last = game.path[game.path.length - 1];
+  game.current = iso3Map.get(last);
+  updateLabels();
+  renderTexture();
+}
+
+function startSpeedrunTimer() {
+  stopSpeedrunTimer();
+  speedrunTimeLeft = 60;
+  if (timerDisplay) {
+    timerDisplay.classList.remove('hidden', 'warning');
+    timerDisplay.textContent = '⏱ 01:00';
+  }
+
+  speedrunTimer = setInterval(() => {
+    speedrunTimeLeft--;
+    if (timerDisplay) {
+      const secs = speedrunTimeLeft % 60;
+      const secsStr = secs < 10 ? '0' + secs : secs;
+      timerDisplay.textContent = `⏱ 00:${secsStr}`;
+
+      if (speedrunTimeLeft <= 10) timerDisplay.classList.add('warning');
+    }
+
+    if (speedrunTimeLeft <= 0) {
+      stopSpeedrunTimer();
+      statusLabel.textContent = 'Tempo scaduto!';
+      openGameOverlay('defeat');
+    }
+  }, 1000);
+}
+
+function stopSpeedrunTimer() {
+  if (speedrunTimer) {
+    clearInterval(speedrunTimer);
+    speedrunTimer = null;
+  }
+}
+
 function openGameOverlay(mode) {
   if (!victoryOverlay) return;
   overlayMode = mode;
@@ -1114,6 +397,653 @@ function hideVictoryOverlay() {
   victoryOverlay.classList.add('hidden');
 }
 
+/* ==========================================================================
+   5. UI UPDATES & AUTOCOMPLETE
+   ========================================================================== */
+function updateLabels() {
+  if (!game) return;
+  if (currentBox) {
+    currentBox.textContent = game.start.name || 'Partenza';
+    currentBox.style.background = COLOR_CURRENT;
+  }
+  if (targetBox) {
+    targetBox.textContent = game.target.name || 'Obiettivo';
+    targetBox.style.background = COLOR_TARGET;
+  }
+
+  const sidebar = document.getElementById('timelineSidebar');
+  if (sidebar) {
+    sidebar.innerHTML = '';
+    (game.path || []).forEach((code, idx) => {
+      const c = iso3Map.get(code);
+      const item = document.createElement('div');
+      item.className = 'timeline-item';
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      if (idx === 0) dot.style.background = COLOR_CURRENT;
+      else if (code === game.target.code) dot.style.background = COLOR_TARGET;
+      else dot.style.background = 'rgba(255,255,255,0.15)';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = c ? c.name : code;
+      item.appendChild(dot);
+      item.appendChild(label);
+      item.addEventListener('click', () => {
+        if (c && c.feature) centerOnCountry(c);
+      });
+      sidebar.appendChild(item);
+    });
+  }
+
+  updateAutocompleteSuggestions();
+}
+
+function updateAutocompleteSuggestions() {
+  if (!suggestionsList || !countryInput) return;
+
+  const query = normalizeName(countryInput.value);
+  if (!showSuggestions || selectedGameMode === 'hardcore' || !query) {
+    suggestionsList.innerHTML = '';
+    suggestionsList.classList.add('hidden');
+    return;
+  }
+
+  suggestionsList.innerHTML = '';
+  const candidates = [];
+  const added = new Set();
+
+  if (game && game.current && Array.isArray(game.current.borders)) {
+    game.current.borders.forEach(borderCode => {
+      const borderCountry = iso3Map.get(borderCode);
+      if (borderCountry && !added.has(borderCountry.name)) {
+        if (normalizeName(borderCountry.name).includes(query)) {
+          candidates.push(borderCountry);
+          added.add(borderCountry.name);
+        }
+      }
+    });
+  }
+
+  countries.forEach(c => {
+    if (!added.has(c.name) && normalizeName(c.name).includes(query)) {
+      candidates.push(c);
+      added.add(c.name);
+    }
+  });
+
+  if (candidates.length === 0) {
+    suggestionsList.classList.add('hidden');
+    return;
+  }
+
+  candidates.slice(0, 5).forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'suggestion-item';
+    item.textContent = c.name;
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      countryInput.value = c.name;
+      suggestionsList.classList.add('hidden');
+      submitMove();
+    });
+    suggestionsList.appendChild(item);
+  });
+
+  suggestionsList.classList.remove('hidden');
+}
+
+function showTooltip(x, y, text) {
+  if (!countryTooltip) return;
+  countryTooltip.textContent = text;
+  countryTooltip.style.left = `${x}px`;
+  countryTooltip.style.top = `${y}px`;
+  countryTooltip.classList.remove('hidden');
+}
+
+function hideTooltip() {
+  if (!countryTooltip) return;
+  countryTooltip.classList.add('hidden');
+}
+
+/* ==========================================================================
+   6. THREE.JS SCENE, CAMERA & VIEW ANIMATIONS
+   ========================================================================== */
+function initThree() {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x06090e, 1);
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 2000);
+  camera.position.set(0, 0, 480);
+
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+  scene.add(ambientLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.95);
+  directionalLight.position.set(1, 2, 1);
+  scene.add(directionalLight);
+
+  const sphereGeometry = new THREE.SphereGeometry(170, 64, 64);
+  globeMaterial = new THREE.MeshPhongMaterial({
+    map: new THREE.CanvasTexture(textureCanvas),
+    shininess: 12,
+    specular: 0x333333,
+    flatShading: false
+  });
+  globe = new THREE.Mesh(sphereGeometry, globeMaterial);
+  scene.add(globe);
+
+  sphereRadius = sphereGeometry.parameters.radius;
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.05;
+  zoomMinZ = fitDistance * 0.45;
+  zoomMaxZ = fitDistance * 3.5;
+  baseFitDistance = fitDistance;
+
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointermove', onCanvasHover);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('pointerleave', onPointerUp);
+  canvas.addEventListener('pointerleave', hideTooltip);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+
+  submitButton.addEventListener('click', submitMove);
+  countryInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') submitMove();
+  });
+}
+
+function resize() {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (viewAnim) {
+    const now = performance.now();
+    const t = Math.min(1, (now - viewAnim.startTime) / viewAnim.duration);
+    const eased = easeInOutCubic(t);
+    globe.quaternion.copy(viewAnim.startQ).slerp(viewAnim.endQ, eased);
+    camera.position.z = viewAnim.startZ + (viewAnim.endZ - viewAnim.startZ) * eased;
+    if (t >= 1) {
+      globe.quaternion.copy(viewAnim.endQ);
+      camera.position.z = viewAnim.endZ;
+      viewAnim = null;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+function centerLonLatWithEquator(lon, lat) {
+  if (typeof lon !== 'number' || typeof lat !== 'number') return;
+  const v = latLonToVector(lon, lat);
+  const q = new THREE.Quaternion().setFromUnitVectors(v, new THREE.Vector3(0, 0, 1));
+
+  const northVec = latLonToVector(0, 90);
+  const northRotated = northVec.clone().applyQuaternion(q);
+  const projX = northRotated.x;
+  const projY = northRotated.y;
+  let phi = 0;
+  if (Math.hypot(projX, projY) > 1e-6) phi = Math.atan2(projX, projY);
+  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), phi);
+  const qf = qz.multiply(q);
+
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.02;
+  const targetZ = Math.max(camera.position.z || fitDistance, fitDistance * 0.7);
+
+  startViewAnimation(qf, targetZ, 650);
+}
+
+function centerOnCountry(country) {
+  if (!country || !country.feature) return;
+  const c = computeFeatureCentroid(country.feature);
+  centerLonLatWithEquator(c.lon, c.lat);
+}
+
+function centerOnCountryKeepView(country) {
+  if (!country || !country.feature || !globe) return;
+  const c = computeFeatureCentroid(country.feature);
+  const v = latLonToVector(c.lon, c.lat);
+  const qAlign = new THREE.Quaternion().setFromUnitVectors(v, new THREE.Vector3(0, 0, 1));
+
+  const northVec = latLonToVector(0, 90);
+  const northAfter = northVec.clone().applyQuaternion(qAlign);
+  const angleAfter = Math.atan2(northAfter.x, northAfter.y);
+
+  const northCurrent = northVec.clone().applyQuaternion(globe.quaternion);
+  const currentAngle = Math.atan2(northCurrent.x, northCurrent.y);
+
+  const delta = currentAngle - angleAfter;
+  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), delta);
+  const qFinal = qz.multiply(qAlign);
+
+  startViewAnimation(qFinal, camera.position.z, 600);
+}
+
+function startViewAnimation(endQ, endZ, duration = 600) {
+  if (!globe || !camera) {
+    if (globe && endQ) globe.quaternion.copy(endQ);
+    if (camera && typeof endZ === 'number') camera.position.z = endZ;
+    return;
+  }
+  const startQ = globe.quaternion.clone();
+  const startZ = camera.position.z;
+  viewAnim = {
+    startQ,
+    endQ: endQ.clone(),
+    startZ,
+    endZ: (typeof endZ === 'number') ? endZ : startZ,
+    startTime: performance.now(),
+    duration
+  };
+}
+
+/* ==========================================================================
+   7. INTERACTION & POINTER EVENT HANDLERS
+   ========================================================================== */
+function mapClientToSphere(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+  const length2 = x * x + y * y;
+  const z = length2 <= 1 ? Math.sqrt(1 - length2) : 0;
+  return new THREE.Vector3(x, y, z).normalize();
+}
+
+function onPointerDown(event) {
+  isDragging = true;
+  hideTooltip();
+  try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
+  trackStartVec = mapClientToSphere(event.clientX, event.clientY);
+  trackStartQuat = globe.quaternion.clone();
+}
+
+function onPointerMove(event) {
+  if (!isDragging || !trackStartVec) return;
+  const currentVec = mapClientToSphere(event.clientX, event.clientY);
+
+  const axis = new THREE.Vector3().crossVectors(trackStartVec, currentVec);
+  const dot = Math.max(-1, Math.min(1, trackStartVec.dot(currentVec)));
+  let angle = Math.acos(dot);
+  if (axis.lengthSq() < 1e-8 || isNaN(angle)) return;
+  axis.normalize();
+
+  if (baseFitDistance && camera && camera.position) {
+    let scale = camera.position.z / baseFitDistance;
+    scale = Math.max(0.15, Math.min(1.2, scale));
+    angle = angle * scale;
+  }
+
+  const q = new THREE.Quaternion();
+  q.setFromAxisAngle(axis, angle);
+  globe.quaternion.copy(q.multiply(trackStartQuat));
+}
+
+function onPointerUp(event) {
+  if (event && event.pointerId) {
+    try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
+  }
+  isDragging = false;
+  trackStartVec = null;
+  trackStartQuat = null;
+}
+
+function onWheel(event) {
+  event.preventDefault();
+  if (!camera) return;
+  const delta = event.deltaY;
+  const zoomSpeed = 0.45;
+  camera.position.z += delta * zoomSpeed;
+  camera.position.z = Math.max(zoomMinZ, Math.min(zoomMaxZ, camera.position.z));
+}
+
+function onCanvasHover(event) {
+  if (isDragging || !game || !globe || !camera) {
+    hideTooltip();
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  const ndcY = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+  raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+  const hits = raycaster.intersectObject(globe);
+  if (!hits.length) {
+    hideTooltip();
+    return;
+  }
+  const worldPoint = hits[0].point.clone().normalize();
+  const invQ = globe.quaternion.clone().invert();
+  const localPoint = worldPoint.applyQuaternion(invQ);
+  const ll = vectorToLatLon(localPoint);
+
+  const candidates = getColoredCountries();
+  let found = null;
+  for (const country of candidates) {
+    if (pointInFeatureLatLon(ll.lon, ll.lat, country.feature)) {
+      found = country;
+      break;
+    }
+  }
+
+  if (found) showTooltip(event.clientX, event.clientY, found.name);
+  else hideTooltip();
+}
+
+function getColoredCountries() {
+  if (!game) return [];
+  const codes = new Set(game.path || []);
+  if (game.target) codes.add(game.target.code);
+  const list = [];
+  codes.forEach(code => {
+    const c = iso3Map.get(code);
+    if (c && c.feature) list.push(c);
+  });
+  return list;
+}
+
+/* ==========================================================================
+   8. TEXTURE RENDERING & CANVAS DRAWING
+   ========================================================================== */
+function renderTexture() {
+  textureContext.clearRect(0, 0, textureWidth, textureHeight);
+  
+  // Colore del mare a contrasto elevato (Blu notte/Oceano scuro)
+  textureContext.fillStyle = '#090d16';
+  textureContext.fillRect(0, 0, textureWidth, textureHeight);
+
+  geoDrawAllCountries();
+  drawIslandConnections();
+  drawSmallCountryDots();
+
+  if (globeMaterial && globeMaterial.map) globeMaterial.map.needsUpdate = true;
+}
+
+function geoDrawAllCountries() {
+  const currentCode = game?.current?.code;
+  const targetCode = game?.target?.code;
+
+  const pathIndex = new Map();
+  if (game && Array.isArray(game.path)) {
+    game.path.forEach((code, i) => pathIndex.set(code, i));
+  }
+
+  for (const country of renderCountries) {
+    const feature = country.feature;
+    if (!feature) continue;
+
+    const isCurrent = country.code === currentCode;
+    const isTarget = country.code === targetCode;
+    const isVisited = pathIndex.has(country.code);
+
+    // Modalità Nebbia di Guerra: mostra solo partenza, obiettivo e già visitati
+    if (selectedGameMode === 'fog' && !isCurrent && !isTarget && !isVisited) {
+      continue;
+    }
+
+    let fillStyle = '#2d3748';
+    let drawBorder = selectedGameMode !== 'hardcore' && selectedGameMode !== 'fog';
+
+    if (isCurrent) {
+      fillStyle = COLOR_CURRENT;
+      drawBorder = true;
+    } else if (isTarget) {
+      fillStyle = COLOR_TARGET;
+      drawBorder = true;
+    } else if (isVisited) {
+      const idx = pathIndex.get(country.code);
+      const last = Math.max(1, (game.path.length - 1));
+      const t = idx / last;
+      fillStyle = lerpColorRGBA([200, 255, 180, 0.98], [0, 200, 83, 0.98], t);
+      drawBorder = true;
+    }
+
+    drawGeoFeature(feature, fillStyle, drawBorder);
+  }
+}
+
+function drawGeoFeature(feature, fillStyle, drawBorder = true) {
+  const geometry = feature.geometry;
+  const rings = [];
+  if (geometry.type === 'Polygon') {
+    geometry.coordinates.forEach(ring => rings.push(ring));
+  } else if (geometry.type === 'MultiPolygon') {
+    geometry.coordinates.forEach(polygon => polygon.forEach(ring => rings.push(ring)));
+  }
+
+  const unwrappedRings = rings.map(unwrapRingLongitudes);
+  const needsWrap = unwrappedRings.some(pts => {
+    const lons = pts.map(p => p[0]);
+    return Math.min(...lons) < -180 || Math.max(...lons) > 180;
+  });
+  const lonOffsets = needsWrap ? [-360, 0, 360] : [0];
+
+  textureContext.beginPath();
+  lonOffsets.forEach(offset => {
+    unwrappedRings.forEach(pts => drawRing(pts, offset));
+  });
+  textureContext.fillStyle = fillStyle;
+  textureContext.fill();
+
+  if (drawBorder) {
+    textureContext.save();
+    textureContext.lineWidth = 2.5;
+    textureContext.strokeStyle = 'rgba(0,0,0,0.5)';
+    textureContext.stroke();
+    textureContext.lineWidth = 1.0;
+    textureContext.strokeStyle = 'rgba(255,255,255,0.7)';
+    textureContext.stroke();
+    textureContext.restore();
+  } else {
+    // Hardcore: contorno dello stesso colore dello stato per prevenire linee fantasma
+    textureContext.save();
+    textureContext.lineWidth = 2.0;
+    textureContext.strokeStyle = fillStyle;
+    textureContext.stroke();
+    textureContext.restore();
+  }
+}
+
+function unwrapRingLongitudes(ring) {
+  if (!ring || !ring.length) return [];
+  const out = [];
+  let prevLon = null;
+  let offset = 0;
+  for (let i = 0; i < ring.length; i++) {
+    let [lon, lat] = ring[i];
+    while (lon > 180) lon -= 360;
+    while (lon < -180) lon += 360;
+    if (prevLon !== null) {
+      const diff = lon - prevLon;
+      if (diff > 180) offset -= 360;
+      else if (diff < -180) offset += 360;
+    }
+    out.push([lon + offset, lat]);
+    prevLon = lon;
+  }
+  return out;
+}
+
+function drawRing(points, lonOffset = 0) {
+  if (!points || points.length === 0) return;
+  let started = false;
+  for (let i = 0; i < points.length; i++) {
+    const [lon, lat] = points[i];
+    const [x, y] = projectPoint([lon + lonOffset, lat]);
+    if (!started) {
+      textureContext.moveTo(x, y);
+      started = true;
+    } else {
+      textureContext.lineTo(x, y);
+    }
+  }
+  try { textureContext.closePath(); } catch (e) {}
+}
+
+function drawIslandConnections() {
+  if (!islandConnections.length) return;
+  textureContext.save();
+  textureContext.setLineDash([6, 7]);
+  textureContext.lineWidth = 1.8;
+  textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
+  islandConnections.forEach(({ a, b }) => {
+    const ca = iso3Map.get(a);
+    const cb = iso3Map.get(b);
+    if (!ca?.feature || !cb?.feature) return;
+    const p1 = computeFeatureCentroid(ca.feature);
+    const p2 = computeFeatureCentroid(cb.feature);
+    let lon2 = p2.lon;
+    if (Math.abs(lon2 - p1.lon) > 180) {
+      lon2 += (lon2 < p1.lon) ? 360 : -360;
+    }
+    const [x1, y1] = projectPoint([p1.lon, p1.lat]);
+    const [x2, y2] = projectPoint([lon2, p2.lat]);
+    textureContext.beginPath();
+    textureContext.moveTo(x1, y1);
+    textureContext.lineTo(x2, y2);
+    textureContext.stroke();
+  });
+  textureContext.restore();
+}
+
+function drawSmallCountryDots() {
+  if (!game) return;
+  const currentCode = game.current?.code;
+  const targetCode = game.target?.code;
+  if (currentCode) drawMicroMarkerIfNeeded(currentCode, COLOR_CURRENT);
+  if (targetCode && targetCode !== currentCode) drawMicroMarkerIfNeeded(targetCode, COLOR_TARGET);
+}
+
+function drawMicroMarkerIfNeeded(code, color) {
+  const country = iso3Map.get(code);
+  if (!country || !country.feature) return;
+  const bounds = computeFeaturePixelBounds(country.feature);
+  if (!bounds) return;
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  const pixelThreshold = 12;
+  const isMicro = MICROSTATE_ISO3.has(code);
+  if (isMicro || Math.max(w, h) <= pixelThreshold) {
+    const c = computeFeatureCentroid(country.feature);
+    const [cx, cy] = projectPoint([c.lon, c.lat]);
+
+    textureContext.beginPath();
+    textureContext.arc(cx, cy, 34, 0, Math.PI * 2);
+    textureContext.fillStyle = color.replace(/,[\d.]+\)$/, ',0.28)');
+    textureContext.fill();
+
+    textureContext.beginPath();
+    const r = 20;
+    textureContext.arc(cx, cy, r, 0, Math.PI * 2);
+    textureContext.fillStyle = color;
+    textureContext.fill();
+    textureContext.lineWidth = 3;
+    textureContext.strokeStyle = 'rgba(255,255,255,0.98)';
+    textureContext.stroke();
+  }
+}
+
+/* ==========================================================================
+   9. DATA METADATA, SEARCH & GEO MATH UTILITIES
+   ========================================================================== */
+function buildCountryMetadata(countryData, geoFeatures) {
+  countryData.forEach(country => {
+    if (!country.cca3 || !country.ccn3) return;
+    const iso3 = country.cca3;
+    const numericId = Number(country.ccn3);
+    const region = country.region || (Array.isArray(country.continents) ? country.continents[0] : 'Unknown');
+    const item = {
+      name: country.name && country.name.common ? country.name.common : iso3,
+      code: iso3,
+      borders: country.borders || [],
+      altNames: buildAliases(country),
+      numericId,
+      region,
+      feature: null
+    };
+    iso3Map.set(iso3, item);
+    item.altNames.forEach(alias => {
+      const key = normalizeName(alias);
+      if (!nameMap.has(key)) nameMap.set(key, item);
+    });
+    nameMap.set(normalizeName(item.name), item);
+  });
+
+  geoFeatures.forEach(feature => {
+    const id = Number(feature.id);
+    if (!Number.isFinite(id)) return;
+    for (const country of iso3Map.values()) {
+      if (country.numericId === id) {
+        country.feature = feature;
+        featureByIso.set(country.code, feature);
+        break;
+      }
+    }
+  });
+
+  connectIslandsToNearest();
+  countries = Array.from(iso3Map.values()).filter(country => country.borders.length > 0 && country.feature);
+  renderCountries = Array.from(iso3Map.values()).filter(country => country.feature);
+}
+
+function connectIslandsToNearest() {
+  islandConnections = [];
+  const withFeature = Array.from(iso3Map.values()).filter(c => c.feature);
+  const islands = withFeature.filter(c => c.borders.length === 0);
+  islands.forEach(island => {
+    const centroidA = computeFeatureCentroid(island.feature);
+    let best = null;
+    let bestDist = Infinity;
+    withFeature.forEach(other => {
+      if (other.code === island.code) return;
+      const centroidB = computeFeatureCentroid(other.feature);
+      const d = haversineDistance(centroidA, centroidB);
+      if (d < bestDist) {
+        bestDist = d;
+        best = other;
+      }
+    });
+    if (best) {
+      if (!island.borders.includes(best.code)) island.borders.push(best.code);
+      if (!best.borders.includes(island.code)) best.borders.push(island.code);
+      islandConnections.push({ a: island.code, b: best.code });
+    }
+  });
+}
+
+function buildAliases(country) {
+  const aliases = [];
+  if (country.name && country.name.common) aliases.push(country.name.common);
+  if (country.name && country.name.official && country.name.official !== country.name.common) aliases.push(country.name.official);
+  if (country.translations && country.translations.ita) {
+    const t = country.translations.ita;
+    if (t.common) aliases.push(t.common);
+    if (t.official && t.official !== t.common) aliases.push(t.official);
+  }
+  if (Array.isArray(country.altSpellings)) {
+    country.altSpellings.forEach(alias => {
+      if (typeof alias === 'string' && alias.trim()) aliases.push(alias);
+    });
+  }
+  if (country.cca2) aliases.push(country.cca2);
+  if (country.ccn3) aliases.push(String(country.ccn3));
+  if (country.cca3) aliases.push(country.cca3);
+  return aliases;
+}
+
 function findCountryByName(value) {
   const raw = (value || '').trim();
   const key = normalizeName(raw);
@@ -1141,41 +1071,134 @@ function findCountryByName(value) {
   return best;
 }
 
-function animate() {
-  requestAnimationFrame(animate);
+function normalizeName(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str.trim().toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/["'‘’‚,\.\-\/\(\)]/g, '')
+    .replace(/\s+/g, ' ');
+}
 
-  if (viewAnim) {
-    const now = performance.now();
-    const t = Math.min(1, (now - viewAnim.startTime) / viewAnim.duration);
-    const eased = easeInOutCubic(t);
-    globe.quaternion.copy(viewAnim.startQ).slerp(viewAnim.endQ, eased);
-    camera.position.z = viewAnim.startZ + (viewAnim.endZ - viewAnim.startZ) * eased;
-    if (t >= 1) {
-      globe.quaternion.copy(viewAnim.endQ);
-      camera.position.z = viewAnim.endZ;
-      viewAnim = null;
+function haversineDistance(p1, p2) {
+  const R = 6371;
+  const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+  const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+  const lat1 = p1.lat * Math.PI / 180;
+  const lat2 = p2.lat * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function computeReachableWithDistance(start) {
+  const dist = new Map();
+  const queue = [start];
+  dist.set(start.code, 0);
+  while (queue.length) {
+    const cur = queue.shift();
+    const d = dist.get(cur.code);
+    for (const b of cur.borders) {
+      const neigh = iso3Map.get(b);
+      if (!neigh) continue;
+      if (!dist.has(neigh.code)) {
+        dist.set(neigh.code, d + 1);
+        queue.push(neigh);
+      }
+    }
+  }
+  return dist;
+}
+
+function computeFeaturePixelBounds(feature) {
+  if (!feature || !feature.geometry) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const geom = feature.geometry;
+  function addPoint(lon, lat) {
+    if (lon > 180) lon -= 360;
+    if (lon < -180) lon += 360;
+    const [x, y] = projectPoint([lon, lat]);
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (geom.type === 'Polygon') {
+    geom.coordinates.forEach(ring => ring.forEach(([lon, lat]) => addPoint(lon, lat)));
+  } else if (geom.type === 'MultiPolygon') {
+    geom.coordinates.forEach(polygon => polygon.forEach(ring => ring.forEach(([lon, lat]) => addPoint(lon, lat))));
+  }
+  if (!isFinite(minX)) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function computeFeatureCentroid(feature) {
+  if (!feature || !feature.geometry) return { lon: 0, lat: 0 };
+  const geom = feature.geometry;
+
+  function polygonOuterCentroid(ring) {
+    let sx = 0, sy = 0, n = 0;
+    ring.forEach(([lon, lat]) => {
+      if (lon > 180) lon -= 360;
+      if (lon < -180) lon += 360;
+      sx += lon; sy += lat; n += 1;
+    });
+    if (n === 0) return null;
+    return { lon: sx / n, lat: sy / n };
+  }
+
+  function polygonArea(ring) {
+    let area = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[(i + 1) % ring.length];
+      let ax = x1, bx = x2;
+      if (ax > 180) ax -= 360;
+      if (bx > 180) bx -= 360;
+      area += (ax * y2 - bx * y1);
+    }
+    return Math.abs(area) / 2;
+  }
+
+  let bestCentroid = null;
+  let bestArea = -1;
+
+  if (geom.type === 'Polygon') {
+    const outer = geom.coordinates[0] || [];
+    bestArea = polygonArea(outer);
+    bestCentroid = polygonOuterCentroid(outer);
+  } else if (geom.type === 'MultiPolygon') {
+    for (const polygon of geom.coordinates) {
+      const outer = polygon[0] || [];
+      const a = polygonArea(outer);
+      if (a > bestArea) {
+        bestArea = a;
+        bestCentroid = polygonOuterCentroid(outer);
+      }
     }
   }
 
-  renderer.render(scene, camera);
+  if (!bestCentroid) return { lon: 0, lat: 0 };
+  let lon = bestCentroid.lon;
+  if (lon > 180) lon -= 360;
+  if (lon < -180) lon += 360;
+  return { lon, lat: bestCentroid.lat };
 }
 
-function startViewAnimation(endQ, endZ, duration = 600) {
-  if (!globe || !camera) {
-    if (globe && endQ) globe.quaternion.copy(endQ);
-    if (camera && typeof endZ === 'number') camera.position.z = endZ;
-    return;
-  }
-  const startQ = globe.quaternion.clone();
-  const startZ = camera.position.z;
-  viewAnim = {
-    startQ,
-    endQ: endQ.clone(),
-    startZ,
-    endZ: (typeof endZ === 'number') ? endZ : startZ,
-    startTime: performance.now(),
-    duration
-  };
+function projectPoint([lon, lat]) {
+  return [
+    ((lon + 180) / 360) * textureWidth,
+    ((90 - lat) / 180) * textureHeight
+  ];
+}
+
+function latLonToVector(lonDeg, latDeg) {
+  const phi = (90 - latDeg) * Math.PI / 180;
+  const theta = (lonDeg + 180) * Math.PI / 180;
+  const x = -Math.sin(phi) * Math.cos(theta);
+  const z = Math.sin(phi) * Math.sin(theta);
+  const y = Math.cos(phi);
+  return new THREE.Vector3(x, y, z).normalize();
 }
 
 function vectorToLatLon(v) {
@@ -1230,4 +1253,16 @@ function ringContains(ring, point) {
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function lerpColorRGBA(a, b, t) {
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  const alpha = (a[3] + (b[3] - a[3]) * t);
+  return `rgba(${r},${g},${bl},${alpha})`;
 }

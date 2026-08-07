@@ -8,10 +8,12 @@
 </head>
 <body>
   <div id="app">
+    <!-- Globe Canvas Container -->
     <div id="canvas-container">
       <canvas id="globeCanvas"></canvas>
     </div>
 
+    <!-- Top Left Status Header -->
     <div id="topLeft">
       <div id="currentBox" class="placeBox">Partenza</div>
       <div id="arrow">→</div>
@@ -19,6 +21,7 @@
       <div id="timerDisplay" class="placeBox timer-box hidden">⏱ 01:00</div>
     </div>
 
+    <!-- Top Right Actions & Settings Menu -->
     <div id="topRight">
       <div>
         <button id="menuButton" title="Menu">☰</button>
@@ -46,6 +49,7 @@
       </div>
     </div>
 
+    <!-- Bottom Input Controls -->
     <div id="bottomCenter">
       <div class="input-wrapper">
         <input id="countryInput" placeholder="Inserisci stato confinante..." autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -54,11 +58,13 @@
       <button id="submitButton" title="Invia stato (Enter)">➜</button>
     </div>
 
+    <!-- Feedback & Sidebar -->
     <div id="statusLabel"></div>
     <div id="timelineSidebar" class="timeline-sidebar"></div>
     <div id="countryTooltip" class="tooltip hidden"></div>
   </div>
 
+  <!-- Game Setup & Victory Overlay -->
   <div id="victoryOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="victoryTitle">
     <div class="overlay-card">
       <div id="victoryBadge" class="overlay-badge">🏆</div>
@@ -66,13 +72,19 @@
       <p id="victoryMessage">Hai completato la sfida con successo.</p>
       
       <div class="overlay-controls">
-        <div class="overlay-section">
-          <label>Modalità di Gioco</label>
-          <div class="choice-row" data-choice-group="mode">
-            <button class="small active" data-mode="standard" title="Classico">Standard 🎮</button>
-            <button class="small" data-mode="speedrun" title="60 secondi per vincere">Speedrun ⚡</button>
-            <button class="small" data-mode="hardcore" title="Senza bordi né aiuti">Hardcore 💀</button>
-          </div>
+        <div class="mode-selector">
+          <button class="mode-btn active" data-mode="standard">
+            <span class="mode-name">Classica</span>
+          </button>
+          <button class="mode-btn" data-mode="speedrun">
+            <span class="mode-name">Sprint</span>
+          </button>
+          <button class="mode-btn" data-mode="hardcore">
+            <span class="mode-name">Esperto</span>
+          </button>
+          <button class="mode-btn" data-mode="fog">
+            <span class="mode-name">Inesplorata</span>
+          </button>
         </div>
 
         <div class="overlay-section">
