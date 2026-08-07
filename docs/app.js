@@ -64,6 +64,9 @@ let islandConnections = [];
 let trackStartVec = null;
 let trackStartQuat = null;
 
+let keyboardOpen = false;
+let savedCameraZ = null;
+
 // Gestione Touch & Pinch-to-Zoom
 const activePointers = new Map();
 let prevTouchDiff = -1;
@@ -585,7 +588,7 @@ function updateLabels() {
     }
 
     sidebar.classList.remove('hidden');
-        
+
     sidebar.innerHTML = '';
     (game.path || []).forEach((code, idx) => {
       const c = iso3Map.get(code);
@@ -711,7 +714,45 @@ function initThree() {
 
   window.addEventListener('resize', resize);
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', resize);
+
+    window.visualViewport.addEventListener('resize', () => {
+
+      const viewportHeight = window.visualViewport.height;
+      const windowHeight = window.innerHeight;
+
+      // Tastiera aperta
+      if (viewportHeight < windowHeight * 0.8) {
+
+        keyboardOpen = true;
+
+        if (camera) {
+          savedCameraZ = camera.position.z;
+        }
+
+        return;
+      }
+
+
+      // Tastiera chiusa
+      if (keyboardOpen) {
+
+        keyboardOpen = false;
+
+        resize();
+
+        if (camera && savedCameraZ !== null) {
+          camera.position.z = savedCameraZ;
+        }
+
+        savedCameraZ = null;
+
+        return;
+      }
+
+      resize();
+
+    });
+
   }
   resize();
 
@@ -731,6 +772,8 @@ function initThree() {
 }
 
 function resize() {
+  if (keyboardOpen) return;
+  
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   renderer.setSize(width, height, false);
