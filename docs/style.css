@@ -336,6 +336,7 @@ input[type="text"]:focus {
 
 .modal-card {
   background: #0f172a;
+  position: relative;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
   padding: 24px;
@@ -518,6 +519,36 @@ input[type="text"]:focus {
   cursor: pointer;
 }
 
+.modal-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+
+  width: 34px;
+  height: 34px;
+
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+
+  font-size: 1.1rem;
+  font-weight: 600;
+
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover {
+  background: rgba(255,255,255,0.15);
+  transform: scale(1.05);
+}
 
 .modal-actions {
   display: flex;

@@ -14,6 +14,7 @@ const submitButton = document.getElementById('submitButton');
 const newGameButton = document.getElementById('newGameButton');
 const menuButton = document.getElementById('menuButton');
 const settingsMenu = document.getElementById('settingsMenu');
+const closeSettingsButton = document.getElementById('closeSettingsButton');
 const victoryOverlay = document.getElementById('victoryOverlay');
 const victoryTitle = document.getElementById('victoryTitle');
 const victoryMessage = document.getElementById('victoryMessage');
@@ -134,6 +135,11 @@ function setupControls() {
 
   if (menuButton && settingsMenu) {
     menuButton.addEventListener('click', () => settingsMenu.classList.toggle('hidden'));
+    if (closeSettingsButton && settingsMenu) {
+      closeSettingsButton.addEventListener('click', () => {
+        settingsMenu.classList.add('hidden');
+      });
+    }
     window.addEventListener('pointerdown', (e) => {
       if (!settingsMenu.contains(e.target) && e.target !== menuButton) settingsMenu.classList.add('hidden');
     });
@@ -773,7 +779,7 @@ function initThree() {
 
 function resize() {
   if (keyboardOpen) return;
-  
+
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   renderer.setSize(width, height, false);
