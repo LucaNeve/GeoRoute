@@ -117,10 +117,14 @@ function setupControls() {
 
   if (countryInput) {
     countryInput.addEventListener('input', updateAutocompleteSuggestions);
-    countryInput.addEventListener('focus', updateAutocompleteSuggestions);
+    countryInput.addEventListener('focus', () => {
+      updateAutocompleteSuggestions();
+      setTimeout(() => window.scrollTo(0, 0), 100);
+    });
     countryInput.addEventListener('blur', () => {
       setTimeout(() => {
         if (suggestionsList) suggestionsList.classList.add('hidden');
+        window.scrollTo(0, 0);
       }, 150);
     });
   }
@@ -536,6 +540,9 @@ function initThree() {
   sphereRadius = sphereGeometry.parameters.radius;
 
   window.addEventListener('resize', resize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', resize);
+  }
   resize();
 
   canvas.addEventListener('pointerdown', onPointerDown);
@@ -563,7 +570,6 @@ function resize() {
   const fovRad = (camera.fov * Math.PI) / 180;
   let fitDistance = (sphereRadius / Math.sin(fovRad / 2)) * 1.05;
   
-  // Se lo schermo è in Portrait (mobile), scala la distanza della camera per far stare il globo nello schermo
   if (camera.aspect < 1) {
     fitDistance /= camera.aspect;
   }
@@ -688,7 +694,6 @@ function onPointerMove(event) {
     activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   }
 
-  // --- GESTIONE PINCH TO ZOOM (2 DITA SU MOBILE) ---
   if (activePointers.size === 2) {
     isDragging = false;
     const pts = Array.from(activePointers.values());
@@ -703,7 +708,6 @@ function onPointerMove(event) {
     return;
   }
 
-  // --- TRASCINAMENTO STANDARD (1 DITO / MOUSE) ---
   if (!isDragging || !trackStartVec) return;
   const currentVec = mapClientToSphere(event.clientX, event.clientY);
 
