@@ -1,122 +1,149 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>GeoRoute</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css" />
+  <!-- TopoJSON library -->
+  <script src="https://unpkg.com/topojson-client@3"></script>
 </head>
 <body>
-  <div id="app">
-    <!-- Globe Canvas Container -->
-    <div id="canvas-container">
-      <canvas id="globeCanvas"></canvas>
-    </div>
 
-    <!-- Top Left Status Header -->
-    <div id="topLeft">
-      <div id="currentBox" class="placeBox">Partenza</div>
-      <div id="arrow">→</div>
-      <div id="targetBox" class="placeBox">Obiettivo</div>
-      <div id="timerDisplay" class="placeBox timer-box hidden">⏱ 01:00</div>
-    </div>
+  <!-- Canvas WebGL Globe -->
+  <canvas id="globeCanvas"></canvas>
 
-    <!-- Top Right Actions & Settings Menu -->
-    <div id="topRight">
-      <div>
-        <button id="menuButton" title="Menu">☰</button>
-        <button id="newGameButton" title="Nuova partita">+</button>
-        <button id="alignButton" title="Allinea equatore">⤒</button>
+  <!-- Timer Speedrun -->
+  <div id="timerDisplay" class="timer-badge hidden">⏱ 01:00</div>
+
+  <!-- UI Interface Overlay -->
+  <div class="ui-container">
+    
+    <!-- Top Header Bar -->
+    <header class="top-bar">
+      <div class="route-display">
+        <div id="currentBox" class="badge current-badge" title="Clicca per centrare la posizione attuale">-</div>
+        <span class="route-arrow">➔</span>
+        <div id="targetBox" class="badge target-badge" title="Clicca per centrare l'obiettivo">-</div>
       </div>
-      <div id="settingsMenu" class="hidden">
-        <div id="menuControls">
-          <div style="display:flex; flex-direction:column; gap:10px;">
-            <label class="setting-row">
-              <input type="checkbox" id="toggleSuggestions">
-              <span>Suggerimenti nomi</span>
-            </label>
-            <hr style="border:0; border-top:1px solid rgba(255,255,255,0.08);">
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input id="manualStart" placeholder="Nome Start" style="flex:1;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff;">
-              <button id="applyManualStart" title="Imposta partenza" class="icon-check">✓</button>
-            </div>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <input id="manualTarget" placeholder="Nome Target" style="flex:1;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#fff;">
-              <button id="applyManualTarget" title="Imposta obiettivo" class="icon-check">✓</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Bottom Input Controls -->
-    <div id="bottomCenter">
-      <div class="input-wrapper">
-        <input id="countryInput" placeholder="Inserisci stato confinante..." autocomplete="off" autocapitalize="none" spellcheck="false">
-        <div id="suggestionsList" class="suggestions-dropdown hidden"></div>
-      </div>
-      <button id="submitButton" title="Invia stato (Enter)">➜</button>
-    </div>
-
-    <!-- Feedback & Sidebar -->
-    <div id="statusLabel"></div>
-    <div id="timelineSidebar" class="timeline-sidebar"></div>
-    <div id="countryTooltip" class="tooltip hidden"></div>
-  </div>
-
-  <!-- Game Setup & Victory Overlay -->
-  <div id="victoryOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="victoryTitle">
-    <div class="overlay-card">
-      <div id="victoryBadge" class="overlay-badge">🏆</div>
-      <h1 id="victoryTitle">Hai vinto!</h1>
-      <p id="victoryMessage">Hai completato la sfida con successo.</p>
       
-      <div class="overlay-controls">
-        <div class="mode-selector">
-          <button class="mode-btn active" data-mode="standard">
-            <span class="mode-name">Classica</span>
-          </button>
-          <button class="mode-btn" data-mode="speedrun">
-            <span class="mode-name">Sprint</span>
-          </button>
-          <button class="mode-btn" data-mode="hardcore">
-            <span class="mode-name">Esperto</span>
-          </button>
-          <button class="mode-btn" data-mode="fog">
-            <span class="mode-name">Inesplorata</span>
-          </button>
-        </div>
+      <div class="header-actions">
+        <button id="alignButton" class="icon-btn" title="Riallinea Polo Nord">🧭</button>
+        <button id="menuButton" class="icon-btn" title="Impostazioni / Nuova Partita">⚙️</button>
+      </div>
+    </header>
 
-        <div class="overlay-section">
-          <label>Difficoltà</label>
-          <div class="choice-row" data-choice-group="difficulty">
-            <button class="small" data-diff="easy" title="Facile">★</button>
-            <button class="small" data-diff="medium" title="Medio">★★</button>
-            <button class="small" data-diff="hard" title="Difficile">★★★</button>
-          </div>
-        </div>
+    <!-- Timeline Sidebar (Cronologia percorsi) -->
+    <aside id="timelineSidebar" class="timeline-sidebar"></aside>
 
-        <div class="overlay-section">
-          <label>Continente</label>
-          <div class="choice-row" data-choice-group="continent">
-            <button class="small" data-cont="all" title="Tutti">All</button>
-            <button class="small" data-cont="Africa" title="Africa">AF</button>
-            <button class="small" data-cont="Europe" title="Europa">EU</button>
-            <button class="small" data-cont="Asia" title="Asia">AS</button>
-            <button class="small" data-cont="Americas" title="Americhe">AM</button>
-            <button class="small" data-cont="Oceania" title="Oceania">OC</button>
-          </div>
+    <!-- Bottom Controls Area -->
+    <footer class="bottom-bar">
+      <div id="statusLabel" class="status-label"></div>
+      
+      <div class="input-container">
+        <div class="autocomplete-wrapper">
+          <input 
+            type="text" 
+            id="countryInput" 
+            placeholder="Scrivi il nome di uno stato..." 
+            autocomplete="off" 
+            disabled 
+          />
+          <div id="suggestionsList" class="suggestions-list hidden"></div>
+        </div>
+        <button id="submitButton" class="btn primary-btn" disabled>Invia</button>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Country Tooltip on Hover -->
+  <div id="countryTooltip" class="country-tooltip hidden"></div>
+
+  <!-- Settings / Game Options Menu Modal -->
+  <div id="settingsMenu" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 class="modal-title">Configura Partita</h2>
+      
+      <!-- Modalità di Gioco -->
+      <div class="setting-group">
+        <label class="setting-label">Modalità</label>
+        <div class="button-grid" data-choice-group="mode">
+          <button class="choice-btn active" data-mode="standard">Standard</button>
+          <button class="choice-btn" data-mode="speedrun">Speedrun</button>
+          <button class="choice-btn" data-mode="hardcore">Hardcore</button>
+          <button class="choice-btn" data-mode="fog">Nebbia</button>
+          <button class="choice-btn" data-mode="custom">Personalizzata</button>
         </div>
       </div>
 
-      <div class="overlay-actions">
-        <button id="playAgainButton" class="primary">Gioca ancora</button>
-        <button id="closeVictoryButton" class="secondary">Chiudi</button>
+      <!-- Difficoltà (Segmented Control a Pillole) -->
+      <div class="setting-group">
+        <label class="setting-label">Difficoltà</label>
+        <div class="segmented-control" data-choice-group="difficulty">
+          <button class="segment-btn" data-diff="easy">
+            <span class="diff-dot easy"></span> Facile
+          </button>
+          <button class="segment-btn active" data-diff="medium">
+            <span class="diff-dot medium"></span> Medio
+          </button>
+          <button class="segment-btn" data-diff="hard">
+            <span class="diff-dot hard"></span> Difficile
+          </button>
+        </div>
+      </div>
+
+      <!-- Continente -->
+      <div class="setting-group">
+        <label class="setting-label">Continente</label>
+        <div class="button-grid" data-choice-group="continent">
+          <button class="choice-btn active" data-cont="all">Tutti</button>
+          <button class="choice-btn" data-cont="Europe">Europa</button>
+          <button class="choice-btn" data-cont="Asia">Asia</button>
+          <button class="choice-btn" data-cont="Africa">Africa</button>
+          <button class="choice-btn" data-cont="Americas">Americhe</button>
+        </div>
+      </div>
+
+      <!-- Opzioni Partita Personalizzata (Show/Hide dinamico) -->
+      <div id="customGameOptions" class="custom-options hidden">
+        <div class="input-group">
+          <label for="customStartInput">Stato di Partenza</label>
+          <input type="text" id="customStartInput" placeholder="Es. Italia" />
+        </div>
+        <div class="input-group">
+          <label for="customTargetInput">Stato di Destinazione</label>
+          <input type="text" id="customTargetInput" placeholder="Es. Giappone" />
+        </div>
+      </div>
+
+      <!-- Suggerimenti Autocomplete Toggle -->
+      <div class="setting-group checkbox-group">
+        <label for="toggleSuggestions" class="setting-label">Mostra Suggerimenti</label>
+        <input type="checkbox" id="toggleSuggestions" />
+      </div>
+
+      <div class="modal-actions">
+        <button id="newGameButton" class="btn primary-btn full-width">Avvia Nuova Partita</button>
       </div>
     </div>
   </div>
 
-  <script src="vendor/topojson-client.min.js"></script>
+  <!-- Victory / Defeat Overlay -->
+  <div id="victoryOverlay" class="modal-overlay hidden">
+    <div class="modal-card text-center">
+      <div id="victoryBadge" class="modal-icon">🏆</div>
+      <h2 id="victoryTitle" class="modal-title">Vittoria!</h2>
+      <p id="victoryMessage" class="modal-message"></p>
+      
+      <div class="modal-actions">
+        <button id="playAgainButton" class="btn primary-btn">Gioca ancora</button>
+        <button id="closeVictoryButton" class="btn secondary-btn">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Script module -->
   <script type="module" src="app.js"></script>
 </body>
 </html>

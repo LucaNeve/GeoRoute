@@ -179,6 +179,26 @@ function setActiveMode(mode) {
   document.querySelectorAll('[data-mode]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
+
+  // Gestione visibilità Custom Match Options
+  const customContainer = document.getElementById('customGameOptions');
+  if (customContainer) {
+    customContainer.classList.toggle('hidden', mode !== 'custom');
+  }
+
+  // Disabilita Difficoltà e Continente se in modalità Personalizzata
+  const diffGroup = document.querySelector('[data-choice-group="difficulty"]')?.closest('.setting-group');
+  const contGroup = document.querySelector('[data-choice-group="continent"]')?.closest('.setting-group');
+
+  if (diffGroup && contGroup) {
+    if (mode === 'custom') {
+      diffGroup.classList.add('disabled-group');
+      contGroup.classList.add('disabled-group');
+    } else {
+      diffGroup.classList.remove('disabled-group');
+      contGroup.classList.remove('disabled-group');
+    }
+  }
 }
 
 function setActiveDifficulty(diff) {
@@ -204,36 +224,85 @@ function startNewGame() {
   let start = null;
   let target = null;
 
-  const diff = (document.querySelector('[data-choice-group="difficulty"] .small.active') || {}).dataset?.diff || 'medium';
-  const continent = (document.querySelector('[data-choice-group="continent"] .small.active') || {}).dataset?.cont || 'all';
+  const diff = (document.querySelector('[data-choice-group="difficulty"] .active') || {}).dataset?.diff || 'medium';
+  const continent = (document.querySelector('[data-choice-group="continent"] .active') || {}).dataset?.cont || 'all';
 
-  function candidatePool() {
-    if (continent && continent !== 'all') {
-      return countries.filter(c => c.region === continent);
+  /* ==========================================================================
+     1. MODALITÀ PERSONALIZZATA (CUSTOM)
+     ========================================================================== */
+  if (selectedGameMode === 'custom') {
+    const customStartInput = document.getElementById('customStartInput');
+    const customTargetInput = document.getElementById('customTargetInput');
+
+    const customStart = findCountryByName(customStartInput?.value);
+    const customTarget = findCountryByName(customTargetInput?.value);
+
+    if (!customStart || !customTarget) {
+      statusLabel.textContent = 'Seleziona due stati validi per la partita personalizzata.';
+      return;
     }
-    return countries;
-  }
 
-  const pool = candidatePool();
+    if (customStart.code === customTarget.code) {
+      statusLabel.textContent = 'Partenza e destinazione non possono coincidere.';
+      return;
+    }
 
-  for (let attempt = 0; attempt < 500; attempt++) {
-    const candidate = pool[Math.floor(Math.random() * pool.length)];
-    if (!candidate) break;
-    const distMap = computeReachableWithDistance(candidate);
-    const targets = Array.from(distMap.entries()).filter(([code, d]) => code !== candidate.code);
-    if (!targets.length) continue;
-    let filtered = targets;
-    if (diff === 'easy') filtered = targets.filter(([code, d]) => d <= 3);
-    else if (diff === 'medium') filtered = targets.filter(([code, d]) => d <= 7 && d >= 2);
-    else if (diff === 'hard') filtered = targets.filter(([code, d]) => d >= 5);
+    const distMap = computeReachableWithDistance(customStart);
+    if (!distMap.has(customTarget.code)) {
+      statusLabel.textContent = `${customTarget.name} non è raggiungibile da ${customStart.name}.`;
+      return;
+    }
 
-    if (filtered.length === 0) continue;
-    const [chosenCode] = filtered[Math.floor(Math.random() * filtered.length)];
-    const chosen = iso3Map.get(chosenCode);
-    if (chosen && chosen.code !== candidate.code) {
-      start = candidate;
-      target = chosen;
-      break;
+    start = customStart;
+    target = customTarget;
+  } else {
+    /* ==========================================================================
+       2. MODALITÀ STANDARD / SPEEDRUN / HARDCORE / FOG (Partenza + Arrivo nello stesso continente)
+       ========================================================================== */
+    function candidatePool() {
+      if (continent && continent !== 'all') {
+        return countries.filter(c => c.region === continent);
+      }
+      return countries;
+    }
+
+    const pool = candidatePool();
+
+    for (let attempt = 0; attempt < 500; attempt++) {
+      const candidate = pool[Math.floor(Math.random() * pool.length)];
+      if (!candidate) break;
+
+      const distMap = computeReachableWithDistance(candidate);
+
+      // Filtra i target raggiungibili garantendo che anche l'arrivo sia nello STESSO continente
+      const targets = Array.from(distMap.entries()).filter(([code, d]) => {
+        if (code === candidate.code) return false;
+        const targetCountry = iso3Map.get(code);
+        if (!targetCountry) return false;
+
+        if (continent && continent !== 'all') {
+          return targetCountry.region === continent;
+        }
+        return true;
+      });
+
+      if (!targets.length) continue;
+
+      let filtered = targets;
+      if (diff === 'easy') filtered = targets.filter(([code, d]) => d <= 3);
+      else if (diff === 'medium') filtered = targets.filter(([code, d]) => d <= 7 && d >= 2);
+      else if (diff === 'hard') filtered = targets.filter(([code, d]) => d >= 5);
+
+      if (filtered.length === 0) continue;
+
+      const [chosenCode] = filtered[Math.floor(Math.random() * filtered.length)];
+      const chosen = iso3Map.get(chosenCode);
+
+      if (chosen && chosen.code !== candidate.code) {
+        start = candidate;
+        target = chosen;
+        break;
+      }
     }
   }
 
@@ -271,6 +340,7 @@ function startNewGame() {
   updateLabels();
   statusLabel.textContent = '';
   renderTexture();
+  hideVictoryOverlay();
 }
 
 function submitMove() {
@@ -937,22 +1007,28 @@ function drawIslandConnections() {
   textureContext.setLineDash([6, 7]);
   textureContext.lineWidth = 1.8;
   textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
+  
   islandConnections.forEach(({ a, b }) => {
     const ca = iso3Map.get(a);
     const cb = iso3Map.get(b);
     if (!ca?.feature || !cb?.feature) return;
     const p1 = computeFeatureCentroid(ca.feature);
     const p2 = computeFeatureCentroid(cb.feature);
+    
     let lon2 = p2.lon;
-    if (Math.abs(lon2 - p1.lon) > 180) {
-      lon2 += (lon2 < p1.lon) ? 360 : -360;
-    }
-    const [x1, y1] = projectPoint([p1.lon, p1.lat]);
-    const [x2, y2] = projectPoint([lon2, p2.lat]);
-    textureContext.beginPath();
-    textureContext.moveTo(x1, y1);
-    textureContext.lineTo(x2, y2);
-    textureContext.stroke();
+    let dLon = lon2 - p1.lon;
+    if (dLon > 180) lon2 -= 360;
+    if (dLon < -180) lon2 += 360;
+
+    const offsets = [0, -360, 360];
+    offsets.forEach(offset => {
+      const [x1, y1] = projectPoint([p1.lon + offset, p1.lat]);
+      const [x2, y2] = projectPoint([lon2 + offset, p2.lat]);
+      textureContext.beginPath();
+      textureContext.moveTo(x1, y1);
+      textureContext.lineTo(x2, y2);
+      textureContext.stroke();
+    });
   });
   textureContext.restore();
 }
@@ -1122,7 +1198,10 @@ function normalizeName(str) {
 function haversineDistance(p1, p2) {
   const R = 6371;
   const dLat = (p2.lat - p1.lat) * Math.PI / 180;
-  const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+  let dLonDeg = p2.lon - p1.lon;
+  while (dLonDeg > 180) dLonDeg -= 360;
+  while (dLonDeg < -180) dLonDeg += 360;
+  const dLon = dLonDeg * Math.PI / 180;
   const lat1 = p1.lat * Math.PI / 180;
   const lat2 = p2.lat * Math.PI / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
@@ -1174,15 +1253,22 @@ function computeFeatureCentroid(feature) {
   if (!feature || !feature.geometry) return { lon: 0, lat: 0 };
   const geom = feature.geometry;
 
-  function polygonOuterCentroid(ring) {
-    let sx = 0, sy = 0, n = 0;
+  function ringCentroid3D(ring) {
+    let x = 0, y = 0, z = 0, n = 0;
     ring.forEach(([lon, lat]) => {
-      if (lon > 180) lon -= 360;
-      if (lon < -180) lon += 360;
-      sx += lon; sy += lat; n += 1;
+      const radLon = (lon * Math.PI) / 180;
+      const radLat = (lat * Math.PI) / 180;
+      x += Math.cos(radLat) * Math.cos(radLon);
+      y += Math.cos(radLat) * Math.sin(radLon);
+      z += Math.sin(radLat);
+      n++;
     });
     if (n === 0) return null;
-    return { lon: sx / n, lat: sy / n };
+    x /= n; y /= n; z /= n;
+    const hyp = Math.sqrt(x * x + y * y);
+    const lon = Math.atan2(y, x) * (180 / Math.PI);
+    const lat = Math.atan2(z, hyp) * (180 / Math.PI);
+    return { lon, lat };
   }
 
   function polygonArea(ring) {
@@ -1204,23 +1290,20 @@ function computeFeatureCentroid(feature) {
   if (geom.type === 'Polygon') {
     const outer = geom.coordinates[0] || [];
     bestArea = polygonArea(outer);
-    bestCentroid = polygonOuterCentroid(outer);
+    bestCentroid = ringCentroid3D(outer);
   } else if (geom.type === 'MultiPolygon') {
     for (const polygon of geom.coordinates) {
       const outer = polygon[0] || [];
       const a = polygonArea(outer);
       if (a > bestArea) {
         bestArea = a;
-        bestCentroid = polygonOuterCentroid(outer);
+        bestCentroid = ringCentroid3D(outer);
       }
     }
   }
 
   if (!bestCentroid) return { lon: 0, lat: 0 };
-  let lon = bestCentroid.lon;
-  if (lon > 180) lon -= 360;
-  if (lon < -180) lon += 360;
-  return { lon, lat: bestCentroid.lat };
+  return bestCentroid;
 }
 
 function projectPoint([lon, lat]) {
