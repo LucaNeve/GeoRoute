@@ -167,10 +167,82 @@ function setupControls() {
   if (targetBox) targetBox.addEventListener('click', () => { if (game && game.target) centerOnCountryKeepView(game.target); });
 
   window.addEventListener('keydown', (e) => {
+
     if (!game) return;
-    const undo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z';
-    const altLeft = e.altKey && e.key === 'ArrowLeft';
-    if (undo || altLeft) doUndo();
+
+    const key = e.key;
+
+    // Undo
+    const undo =
+      (e.ctrlKey || e.metaKey) &&
+      key.toLowerCase() === 'z';
+
+    const altLeft =
+      e.altKey &&
+      key === 'ArrowLeft';
+
+
+    if (undo || altLeft) {
+
+      if (selectedGameMode !== 'hardcore') {
+        doUndo();
+      }
+
+      return;
+    }
+
+
+    // Chiudi menu / overlay
+    if (key === 'Escape') {
+
+      if (settingsMenu &&
+          !settingsMenu.classList.contains('hidden')) {
+
+        settingsMenu.classList.add('hidden');
+        return;
+      }
+
+      hideVictoryOverlay();
+      return;
+    }
+
+
+    // Centra globo
+    if (key === ' ') {
+
+      e.preventDefault();
+
+      if (globe) {
+
+        const invQ = globe.quaternion.clone().invert();
+        const localCenter =
+          new THREE.Vector3(0,0,1)
+          .applyQuaternion(invQ);
+
+        const ll = vectorToLatLon(localCenter);
+
+        centerLonLatWithEquator(
+          ll.lon,
+          ll.lat
+        );
+      }
+
+      return;
+    }
+
+
+    // Focus input
+    if (key === '/') {
+
+      e.preventDefault();
+
+      if (countryInput) {
+        countryInput.focus();
+      }
+
+      return;
+    }
+
   });
 }
 
@@ -198,6 +270,25 @@ function setActiveMode(mode) {
       diffGroup.classList.remove('disabled-group');
       contGroup.classList.remove('disabled-group');
     }
+  }
+
+  const suggestionGroup = document.getElementById('toggleSuggestions')?.closest('.setting-group');
+
+  if (suggestionGroup) {
+
+    if (mode === 'hardcore') {
+
+      suggestionGroup.classList.add('disabled-group');
+
+      if (toggleSuggestions) {
+        toggleSuggestions.checked = false;
+        showSuggestions = false;
+      }
+
+    } else {
+      suggestionGroup.classList.remove('disabled-group');
+    }
+
   }
 }
 
@@ -485,7 +576,16 @@ function updateLabels() {
   }
 
   const sidebar = document.getElementById('timelineSidebar');
+
   if (sidebar) {
+
+    if (selectedGameMode === 'hardcore') {
+      sidebar.classList.add('hidden');
+      return;
+    }
+
+    sidebar.classList.remove('hidden');
+        
     sidebar.innerHTML = '';
     (game.path || []).forEach((code, idx) => {
       const c = iso3Map.get(code);
@@ -948,20 +1048,41 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true) {
   textureContext.fill();
 
   if (drawBorder) {
+
     textureContext.save();
+
+    // Glow fog mode
+    if (selectedGameMode === 'fog') {
+
+      textureContext.shadowColor = 'rgba(0,200,255,0.9)';
+      textureContext.shadowBlur = 18;
+      textureContext.lineWidth = 3.5;
+      textureContext.strokeStyle = 'rgba(0,220,255,0.9)';
+      textureContext.stroke();
+
+    }
+
+    textureContext.shadowBlur = 0;
+
+    // bordo normale
     textureContext.lineWidth = 2.5;
     textureContext.strokeStyle = 'rgba(0,0,0,0.5)';
     textureContext.stroke();
-    textureContext.lineWidth = 1.0;
+
+    textureContext.lineWidth = 1;
     textureContext.strokeStyle = 'rgba(255,255,255,0.7)';
     textureContext.stroke();
+
     textureContext.restore();
+
   } else {
+
     textureContext.save();
-    textureContext.lineWidth = 2.0;
+    textureContext.lineWidth = 2;
     textureContext.strokeStyle = fillStyle;
     textureContext.stroke();
     textureContext.restore();
+
   }
 }
 
