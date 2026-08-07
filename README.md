@@ -1,71 +1,58 @@
-GeoRoute — README essenziale
+# GeoRoute
 
-Descrizione
+> A geography game about finding a route across the world, one neighbouring country at a time.
 
-MondoConfini è una web-app 3D (Three.js) che mostra un mappamondo con confini reali e un semplice gioco: partire da uno stato e raggiungerne un altro inserendo i nomi di stati confinanti.
+**English** · [Italiano](README.it.md)
 
-Requisiti
+GeoRoute is a browser-based 3D geography game. Each challenge begins in one country and ends in another: the route can advance only through adjacent countries. The interactive globe keeps the journey visible at every step.
 
-- Browser moderno (Chrome/Edge/Firefox)
-- Node.js (opzionale, per avviare un server con http-server)
-- Python (opzionale, per avviare un server con http.server)
+## Highlights
 
-Struttura principale
+- Interactive **3D globe** built with Three.js, with rotation, zoom, hover labels, and route focus.
+- Country-to-country navigation based on the project's geographic adjacency graph.
+- Journey history with one-step backtracking; previously visited countries cannot be reused otherwise.
+- Five game modes: **Standard**, **Speedrun**, **Hardcore**, **Fog**, and **Custom**.
+- Configurable difficulty and continent filters, plus optional country-name suggestions.
 
-- web/            → codice della web-app
-  - index.html
-  - style.css
-  - app.js
-  - vendor/       → librerie minificate (three, topojson, ...)
-  - data/         → countries-110m.json, countries.json (TopoJSON e metadata)
+## Game modes
 
-Avvio rapido (sviluppo)
+| Mode | Description |
+| --- | --- |
+| Standard | A classic randomly generated route. |
+| Speedrun | Reach the destination within 60 seconds. |
+| Hardcore | Hides borders and disables suggestions. |
+| Fog | Conceals the map's borders for a less assisted challenge. |
+| Custom | Select both the origin and destination. |
 
-1) Usando Node (consigliato se installato)
-   - Apri PowerShell nella cartella del progetto e avvia il server statico:
-     cd C:\Users\l.neve\www\personal\LJAVA\Confini\web
-     npx http-server -p 8080
-   - Apri nel browser: http://localhost:8080
+## Run locally
 
-2) Usando Python (alternativa)
-   - Dal folder web:
-     cd C:\Users\l.neve\www\personal\LJAVA\Confini\web
-     python -m http.server 8080
-   - Apri nel browser: http://localhost:8080
+GeoRoute is served as a static web application. It requires a modern browser with WebGL and Node.js to start the included local server.
 
-Consigli utili
+```bash
+node docs/server.js
+```
 
-- Durante lo sviluppo: apri DevTools (F12) → Network → spunta "Disable cache" e fai un hard reload (Ctrl+F5) dopo le modifiche ai file JS/CSS.
-- Se avvii il server in background, salva il PID (Start-Process con -PassThru) e termina con Stop-Process -Id <PID>.
+The application is then available at [http://localhost:8080](http://localhost:8080). A different port can be selected with the `PORT` environment variable.
 
-Comandi PowerShell utili (one-liner)
+```bash
+cd docs
+npm start
+```
 
-- Avvio rapido (foreground con Node):
-  cd C:\Users\l.neve\www\personal\LJAVA\Confini\web; npx http-server -p 8080
+## Project layout
 
-- Avvio background (salva PID):
-  cd C:\Users\l.neve\www\personal\LJAVA\Confini; $p = Start-Process -FilePath $env:ComSpec -ArgumentList '/c','npx http-server web -p 8080' -PassThru; $p.Id | Out-File .\server.pid
+```text
+docs/
+├── index.html          # Application structure
+├── app.js              # Game, globe, and interaction logic
+├── style.css           # Interface styling
+├── server.js           # Minimal static development server
+├── data/               # TopoJSON geometry and country metadata
+└── vendor/             # Local Three.js and TopoJSON client builds
+```
 
-- Fermare il server (usando server.pid):
-  $pid = Get-Content .\server.pid; Stop-Process -Id $pid; Remove-Item .\server.pid
+## Data and implementation
 
-Modifiche comuni
+Country geometry comes from the included TopoJSON dataset; country metadata supplies names, translations, regions, and borders. The game uses those borders to build its route graph. Isolated countries are connected to their nearest country so that every challenge remains playable.
 
-- UI/behaviour: modifica web/app.js e web/style.css
-- Dati geografici: web/data/*.json (TopoJSON / metadata)
-- Rigenera la texture: renderTexture() in app.js — la texture è un canvas mappato sulla sfera
-
-Problemi noti e debug
-
-- Artefatti sui confini (es. Russia): possono dipendere da poligoni multipli e dall'antimeridiano. Se persistono, posso integrare d3-geo/turf per pre-processare/spezzare i ring.
-- Texture molto grande (4096×2048) può essere lenta su macchine poco potenti.
-- Se vedi errori in console: copia/incolla le prime righe della Console (DevTools → Console) e inviamele; includi il browser e la versione.
-
-Contribuire / estendere
-
-- Aggiungere centri più accurati: integrare d3-geo o turf.js per centroidi area-weighted e proiezioni più accurate.
-- Rendere la linea USA–RUS opzionale: logica in app.js dove viene aggiunto il bordo.
-
-Licenza & note
-
-Questo repository è un progetto personale/prototipo. Non contiene credenziali o dati sensibili.
+The globe is rendered with Three.js, while country outlines and route states are drawn onto a canvas texture mapped to the sphere.
