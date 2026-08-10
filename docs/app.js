@@ -23,6 +23,15 @@ const playAgainButton = document.getElementById('playAgainButton');
 const closeVictoryButton = document.getElementById('closeVictoryButton');
 const countryTooltip = document.getElementById('countryTooltip');
 const timerDisplay = document.getElementById('timerDisplay');
+const victoryStats = document.getElementById('victoryStats');
+const statYourSteps = document.getElementById('statYourSteps');
+const statShortestSteps = document.getElementById('statShortestSteps');
+const victoryReviewActions = document.getElementById('victoryReviewActions');
+const reviewMyPathButton = document.getElementById('reviewMyPathButton');
+const reviewShortestPathButton = document.getElementById('reviewShortestPathButton');
+const pathReviewBar = document.getElementById('pathReviewBar');
+const pathReviewLabel = document.getElementById('pathReviewLabel');
+const backToSummaryButton = document.getElementById('backToSummaryButton');
 
 /* ==========================================================================
    2. CONSTANTS & GLOBAL STATE
@@ -47,6 +56,7 @@ let countries = [];
 let renderCountries = [];
 let iso3Map = new Map();
 let nameMap = new Map();
+let nameMapCompact = new Map(); // alias senza spazi, per matching più tollerante
 let featureByIso = new Map();
 let game = null;
 let isDragging = false;
@@ -62,11 +72,13 @@ let zoomMaxZ = 900;
 let baseFitDistance = null;
 let viewAnim = null;
 let islandConnections = [];
-let trackStartVec = null;
-let trackStartQuat = null;
+let lastPointerPos = null;
 
 let keyboardOpen = false;
 let savedCameraZ = null;
+
+// Anteprima percorso (riepilogo finale)
+let previewState = null; // { codes: [...], mode: 'mine' | 'shortest' }
 
 // Gestione Touch & Pinch-to-Zoom
 const activePointers = new Map();
@@ -161,6 +173,16 @@ function setupControls() {
 
   if (closeVictoryButton) closeVictoryButton.addEventListener('click', hideVictoryOverlay);
 
+  if (reviewMyPathButton) {
+    reviewMyPathButton.addEventListener('click', () => startPathReview('mine'));
+  }
+  if (reviewShortestPathButton) {
+    reviewShortestPathButton.addEventListener('click', () => startPathReview('shortest'));
+  }
+  if (backToSummaryButton) {
+    backToSummaryButton.addEventListener('click', endPathReview);
+  }
+
   const alignButton = document.getElementById('alignButton');
   if (alignButton) {
     alignButton.addEventListener('click', () => {
@@ -211,13 +233,28 @@ function setupControls() {
         return;
       }
 
+      if (previewState) {
+        endPathReview();
+        return;
+      }
+
       hideVictoryOverlay();
       return;
     }
 
 
-    // Centra globo
+    // Centra globo (MAI se l'utente sta scrivendo in un campo di testo,
+    // altrimenti non si potrebbero digitare stati con lo spazio, es. "Sud Africa")
     if (key === ' ') {
+
+      const activeEl = document.activeElement;
+      const isTypingField = activeEl && (
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.isContentEditable
+      );
+
+      if (isTypingField) return;
 
       e.preventDefault();
 
@@ -320,6 +357,8 @@ function startNewGame() {
   if (!countries.length) return;
 
   stopSpeedrunTimer();
+  previewState = null;
+  if (pathReviewBar) pathReviewBar.classList.add('hidden');
 
   let start = null;
   let target = null;
@@ -416,7 +455,8 @@ function startNewGame() {
     current: start,
     target,
     visited: new Set([start.code]),
-    path: [start.code]
+    path: [start.code],
+    shortestPath: computeShortestPathCodes(start, target)
   };
 
   if (countryInput) {
@@ -539,6 +579,10 @@ function stopSpeedrunTimer() {
 function openGameOverlay(mode) {
   if (!victoryOverlay) return;
   overlayMode = mode;
+
+  if (victoryStats) victoryStats.classList.add('hidden');
+  if (victoryReviewActions) victoryReviewActions.classList.add('hidden');
+
   if (mode === 'victory') {
     const startName = game?.start?.name || 'Partenza';
     const targetName = game?.target?.name || 'Obiettivo';
@@ -547,6 +591,23 @@ function openGameOverlay(mode) {
     if (victoryMessage) victoryMessage.textContent = `Hai raggiunto ${targetName} partendo da ${startName}. Vuoi giocare un'altra sfida?`;
     if (playAgainButton) playAgainButton.textContent = 'Gioca ancora';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+
+    const yourSteps = game && Array.isArray(game.path) ? game.path.length - 1 : null;
+    const shortestSteps = game && Array.isArray(game.shortestPath) ? game.shortestPath.length - 1 : null;
+
+    if (yourSteps !== null && shortestSteps !== null && victoryStats) {
+      if (statYourSteps) statYourSteps.textContent = String(yourSteps);
+      if (statShortestSteps) statShortestSteps.textContent = String(shortestSteps);
+      victoryStats.classList.remove('hidden');
+
+      if (victoryReviewActions) {
+        victoryReviewActions.classList.remove('hidden');
+        if (reviewShortestPathButton) {
+          // Se hai già fatto il percorso minimo, non serve confrontarlo con se stesso
+          reviewShortestPathButton.classList.toggle('hidden', yourSteps <= shortestSteps);
+        }
+      }
+    }
   } else if (mode === 'defeat') {
     if (victoryBadge) victoryBadge.textContent = '⏱️';
     if (victoryTitle) victoryTitle.textContent = 'Tempo Scaduto!';
@@ -568,6 +629,80 @@ function openGameOverlay(mode) {
 function hideVictoryOverlay() {
   if (!victoryOverlay) return;
   victoryOverlay.classList.add('hidden');
+}
+
+/* ==========================================================================
+   4bis. REVISIONE PERCORSO (riepilogo finale)
+   ========================================================================== */
+function startPathReview(mode) {
+  if (!game) return;
+  const codes = mode === 'shortest' ? game.shortestPath : game.path;
+  if (!Array.isArray(codes) || codes.length === 0) return;
+
+  previewState = { codes, mode };
+
+  if (victoryOverlay) victoryOverlay.classList.add('hidden');
+  if (pathReviewBar) pathReviewBar.classList.remove('hidden');
+  if (pathReviewLabel) {
+    pathReviewLabel.textContent = mode === 'shortest'
+      ? 'Anteprima: percorso più breve'
+      : 'Anteprima: il tuo percorso';
+  }
+
+  renderTexture();
+  fitViewToPath(codes);
+}
+
+function endPathReview() {
+  previewState = null;
+  if (pathReviewBar) pathReviewBar.classList.add('hidden');
+  renderTexture();
+  openGameOverlay('victory');
+}
+
+function fitViewToPath(codes) {
+  if (!globe || !camera) return;
+  const points = codes
+    .map(code => iso3Map.get(code))
+    .filter(c => c && c.feature)
+    .map(c => computeFeatureCentroid(c.feature));
+  if (!points.length) return;
+
+  // Centro = media vettoriale (sulla sfera) dei centroidi coinvolti
+  let vx = 0, vy = 0, vz = 0;
+  const vecs = points.map(p => latLonToVector(p.lon, p.lat));
+  vecs.forEach(v => { vx += v.x; vy += v.y; vz += v.z; });
+  const avg = new THREE.Vector3(vx / vecs.length, vy / vecs.length, vz / vecs.length);
+  if (avg.lengthSq() < 1e-6) avg.set(0, 0, 1);
+  avg.normalize();
+
+  // Distanza angolare massima dal centro: serve per capire quanto zoomare
+  let maxAngle = 0;
+  vecs.forEach(v => {
+    const angle = avg.angleTo(v);
+    if (angle > maxAngle) maxAngle = angle;
+  });
+
+  const avgLL = vectorToLatLon(avg);
+  const v = latLonToVector(avgLL.lon, avgLL.lat);
+  const q = new THREE.Quaternion().setFromUnitVectors(v, new THREE.Vector3(0, 0, 1));
+
+  const northVec = latLonToVector(0, 90);
+  const northRotated = northVec.clone().applyQuaternion(q);
+  let phi = 0;
+  if (Math.hypot(northRotated.x, northRotated.y) > 1e-6) phi = Math.atan2(northRotated.x, northRotated.y);
+  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), phi);
+  const qf = qz.multiply(q);
+
+  let targetZ = baseFitDistance || camera.position.z;
+  if (baseFitDistance && camera.fov) {
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const paddedAngle = Math.max(maxAngle * 1.7, 0.22);
+    targetZ = (sphereRadius * Math.sin(Math.min(paddedAngle, Math.PI * 0.48))) / Math.sin(fovRad / 2);
+    targetZ = Math.max(zoomMinZ, Math.min(zoomMaxZ, targetZ));
+  }
+
+  startViewAnimation(qf, targetZ, 700);
 }
 
 /* ==========================================================================
@@ -620,6 +755,12 @@ function updateLabels() {
   updateAutocompleteSuggestions();
 }
 
+function nameMatchesQuery(name, query, queryCompact) {
+  const normName = normalizeName(name);
+  if (normName.includes(query)) return true;
+  return normName.replace(/\s+/g, '').includes(queryCompact);
+}
+
 function updateAutocompleteSuggestions() {
   if (!suggestionsList || !countryInput) return;
 
@@ -629,6 +770,7 @@ function updateAutocompleteSuggestions() {
     suggestionsList.classList.add('hidden');
     return;
   }
+  const queryCompact = query.replace(/\s+/g, '');
 
   suggestionsList.innerHTML = '';
   const candidates = [];
@@ -638,7 +780,7 @@ function updateAutocompleteSuggestions() {
     game.current.borders.forEach(borderCode => {
       const borderCountry = iso3Map.get(borderCode);
       if (borderCountry && !added.has(borderCountry.name)) {
-        if (normalizeName(borderCountry.name).includes(query)) {
+        if (nameMatchesQuery(borderCountry.name, query, queryCompact)) {
           candidates.push(borderCountry);
           added.add(borderCountry.name);
         }
@@ -647,7 +789,7 @@ function updateAutocompleteSuggestions() {
   }
 
   countries.forEach(c => {
-    if (!added.has(c.name) && normalizeName(c.name).includes(query)) {
+    if (!added.has(c.name) && nameMatchesQuery(c.name, query, queryCompact)) {
       candidates.push(c);
       added.add(c.name);
     }
@@ -887,15 +1029,6 @@ function startViewAnimation(endQ, endZ, duration = 600) {
 /* ==========================================================================
    7. INTERACTION & POINTER EVENT HANDLERS
    ========================================================================== */
-function mapClientToSphere(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
-  const length2 = x * x + y * y;
-  const z = length2 <= 1 ? Math.sqrt(1 - length2) : 0;
-  return new THREE.Vector3(x, y, z).normalize();
-}
-
 function onPointerDown(event) {
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
@@ -903,8 +1036,7 @@ function onPointerDown(event) {
     isDragging = true;
     hideTooltip();
     try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
-    trackStartVec = mapClientToSphere(event.clientX, event.clientY);
-    trackStartQuat = globe.quaternion.clone();
+    lastPointerPos = { x: event.clientX, y: event.clientY };
   }
 }
 
@@ -927,24 +1059,40 @@ function onPointerMove(event) {
     return;
   }
 
-  if (!isDragging || !trackStartVec) return;
-  const currentVec = mapClientToSphere(event.clientX, event.clientY);
+  if (!isDragging || !lastPointerPos || !globe) return;
 
-  const axis = new THREE.Vector3().crossVectors(trackStartVec, currentVec);
-  const dot = Math.max(-1, Math.min(1, trackStartVec.dot(currentVec)));
-  let angle = Math.acos(dot);
-  if (axis.lengthSq() < 1e-8 || isNaN(angle)) return;
-  axis.normalize();
+  // Rotazione a "delta" incrementale: lo spostamento orizzontale del mouse
+  // ruota sempre il globo attorno all'asse verticale dello schermo, quello
+  // verticale attorno all'asse orizzontale. Niente più proiezioni su sfera
+  // e angoli via arcoseno: risultato lineare, prevedibile e senza "scatti"
+  // quando ci si muove velocemente o vicino al bordo del globo.
+  const dx = event.clientX - lastPointerPos.x;
+  const dy = event.clientY - lastPointerPos.y;
+  lastPointerPos = { x: event.clientX, y: event.clientY };
 
+  if (dx === 0 && dy === 0) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const refDimension = Math.min(rect.width, rect.height) || 1;
+
+  // Sensibilità relativa allo zoom corrente: più sei vicino, più il
+  // trascinamento è "lento" in termini angolari (comportamento naturale).
+  let zoomScale = 1;
   if (baseFitDistance && camera && camera.position) {
-    let scale = camera.position.z / baseFitDistance;
-    scale = Math.max(0.15, Math.min(1.2, scale));
-    angle = angle * scale;
+    zoomScale = camera.position.z / baseFitDistance;
+    zoomScale = Math.max(0.35, Math.min(1.6, zoomScale));
   }
 
-  const q = new THREE.Quaternion();
-  q.setFromAxisAngle(axis, angle);
-  globe.quaternion.copy(q.multiply(trackStartQuat));
+  const rotSpeed = (Math.PI / refDimension) * 1.35 * zoomScale;
+  const yaw = dx * rotSpeed;
+  const pitch = dy * rotSpeed;
+
+  const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+
+  // Applicate in spazio mondo (non locale al globo), così la sensibilità
+  // resta coerente indipendentemente da come il globo è già ruotato.
+  globe.quaternion.premultiply(qYaw).premultiply(qPitch);
 }
 
 function onPointerUp(event) {
@@ -957,8 +1105,7 @@ function onPointerUp(event) {
       try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
     }
     isDragging = false;
-    trackStartVec = null;
-    trackStartQuat = null;
+    lastPointerPos = null;
   }
 }
 
@@ -1024,11 +1171,103 @@ function renderTexture() {
   textureContext.fillStyle = '#090d16';
   textureContext.fillRect(0, 0, textureWidth, textureHeight);
 
-  geoDrawAllCountries();
-  drawIslandConnections();
-  drawSmallCountryDots();
+  if (previewState) {
+    geoDrawPathPreview(previewState);
+  } else {
+    geoDrawAllCountries();
+    drawIslandConnections();
+    drawSmallCountryDots();
+  }
 
   if (globeMaterial && globeMaterial.map) globeMaterial.map.needsUpdate = true;
+}
+
+function geoDrawPathPreview(preview) {
+  const codes = preview.codes;
+  const codeSet = new Set(codes);
+  const indexOf = new Map();
+  codes.forEach((code, i) => indexOf.set(code, i));
+
+  // Palette diversa per distinguere "il tuo percorso" dal "percorso più breve"
+  const fromColor = preview.mode === 'shortest' ? [56, 189, 248, 0.95] : [200, 255, 180, 0.98];
+  const toColor = preview.mode === 'shortest' ? [124, 58, 237, 0.95] : [0, 200, 83, 0.98];
+  const lineColor = preview.mode === 'shortest' ? 'rgba(56, 189, 248, 0.85)' : 'rgba(0, 200, 83, 0.85)';
+
+  // Tutti gli altri paesi: sfondo neutro, appena visibile
+  for (const country of renderCountries) {
+    if (!country.feature || codeSet.has(country.code)) continue;
+    drawGeoFeature(country.feature, '#1b2433', false);
+  }
+
+  // Paesi del percorso, con gradiente in base all'ordine di attraversamento
+  const lastIdx = Math.max(1, codes.length - 1);
+  codes.forEach(code => {
+    const country = iso3Map.get(code);
+    if (!country || !country.feature) return;
+    const t = indexOf.get(code) / lastIdx;
+    const fillStyle = lerpColorRGBA(fromColor, toColor, t);
+    drawGeoFeature(country.feature, fillStyle, true);
+  });
+
+  drawIslandConnections();
+
+  // Linea che collega i centroidi nell'ordine del percorso
+  textureContext.save();
+  textureContext.lineWidth = 3;
+  textureContext.strokeStyle = lineColor;
+  textureContext.setLineDash([]);
+  for (let i = 0; i < codes.length - 1; i++) {
+    const a = iso3Map.get(codes[i]);
+    const b = iso3Map.get(codes[i + 1]);
+    if (!a?.feature || !b?.feature) continue;
+    const p1 = computeFeatureCentroid(a.feature);
+    let p2 = computeFeatureCentroid(b.feature);
+    let lon2 = p2.lon;
+    const dLon = lon2 - p1.lon;
+    if (dLon > 180) lon2 -= 360;
+    if (dLon < -180) lon2 += 360;
+
+    [0, -360, 360].forEach(offset => {
+      const [x1, y1] = projectPoint([p1.lon + offset, p1.lat]);
+      const [x2, y2] = projectPoint([lon2 + offset, p2.lat]);
+      textureContext.beginPath();
+      textureContext.moveTo(x1, y1);
+      textureContext.lineTo(x2, y2);
+      textureContext.stroke();
+    });
+  }
+  textureContext.restore();
+
+  // Marcatori numerati di partenza/arrivo
+  if (codes.length) {
+    drawPathStepMarker(codes[0], 1, 'rgba(0, 200, 83, 0.98)');
+    if (codes.length > 1) {
+      drawPathStepMarker(codes[codes.length - 1], codes.length, 'rgba(220, 20, 60, 0.98)');
+    }
+  }
+}
+
+function drawPathStepMarker(code, stepNumber, color) {
+  const country = iso3Map.get(code);
+  if (!country || !country.feature) return;
+  const c = computeFeatureCentroid(country.feature);
+  const [cx, cy] = projectPoint([c.lon, c.lat]);
+
+  textureContext.save();
+  textureContext.beginPath();
+  textureContext.arc(cx, cy, 26, 0, Math.PI * 2);
+  textureContext.fillStyle = color;
+  textureContext.fill();
+  textureContext.lineWidth = 3;
+  textureContext.strokeStyle = 'rgba(255,255,255,0.95)';
+  textureContext.stroke();
+
+  textureContext.fillStyle = '#fff';
+  textureContext.font = 'bold 26px sans-serif';
+  textureContext.textAlign = 'center';
+  textureContext.textBaseline = 'middle';
+  textureContext.fillText(String(stepNumber), cx, cy + 1);
+  textureContext.restore();
 }
 
 function geoDrawAllCountries() {
@@ -1040,6 +1279,20 @@ function geoDrawAllCountries() {
     game.path.forEach((code, i) => pathIndex.set(code, i));
   }
 
+  // Quality-of-life: evidenzia i paesi confinanti con quello attuale, così
+  // sono più facili da individuare a colpo d'occhio. Disattivato in
+  // Hardcore (nessun aiuto visivo per design) e in Nebbia (rivelerebbe
+  // paesi che la modalità vuole tenere nascosti).
+  const neighborCodes = new Set();
+  if (
+    selectedGameMode !== 'hardcore' &&
+    selectedGameMode !== 'fog' &&
+    game?.current &&
+    Array.isArray(game.current.borders)
+  ) {
+    game.current.borders.forEach(code => neighborCodes.add(code));
+  }
+
   for (const country of renderCountries) {
     const feature = country.feature;
     if (!feature) continue;
@@ -1047,6 +1300,7 @@ function geoDrawAllCountries() {
     const isCurrent = country.code === currentCode;
     const isTarget = country.code === targetCode;
     const isVisited = pathIndex.has(country.code);
+    const isNeighbor = !isCurrent && !isTarget && !isVisited && neighborCodes.has(country.code);
 
     if (selectedGameMode === 'fog' && !isCurrent && !isTarget && !isVisited) {
       continue;
@@ -1054,6 +1308,7 @@ function geoDrawAllCountries() {
 
     let fillStyle = '#2d3748';
     let drawBorder = selectedGameMode !== 'hardcore' && selectedGameMode !== 'fog';
+    let neighborHighlight = false;
 
     if (isCurrent) {
       fillStyle = COLOR_CURRENT;
@@ -1067,13 +1322,17 @@ function geoDrawAllCountries() {
       const t = idx / last;
       fillStyle = lerpColorRGBA([200, 255, 180, 0.98], [0, 200, 83, 0.98], t);
       drawBorder = true;
+    } else if (isNeighbor) {
+      fillStyle = 'rgba(56, 189, 248, 0.30)';
+      drawBorder = true;
+      neighborHighlight = true;
     }
 
-    drawGeoFeature(feature, fillStyle, drawBorder);
+    drawGeoFeature(feature, fillStyle, drawBorder, neighborHighlight);
   }
 }
 
-function drawGeoFeature(feature, fillStyle, drawBorder = true) {
+function drawGeoFeature(feature, fillStyle, drawBorder = true, neighborHighlight = false) {
   const geometry = feature.geometry;
   const rings = [];
   if (geometry.type === 'Polygon') {
@@ -1100,13 +1359,14 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true) {
 
     textureContext.save();
 
-    // Glow fog mode
+    // Bordo modalità nebbia: leggermente evidenziato ma senza l'effetto
+    // "neon" eccessivo di prima (shadowBlur/saturazione ridotti).
     if (selectedGameMode === 'fog') {
 
-      textureContext.shadowColor = 'rgba(0,200,255,0.9)';
-      textureContext.shadowBlur = 18;
-      textureContext.lineWidth = 3.5;
-      textureContext.strokeStyle = 'rgba(0,220,255,0.9)';
+      textureContext.shadowColor = 'rgba(140,190,255,0.45)';
+      textureContext.shadowBlur = 6;
+      textureContext.lineWidth = 2.2;
+      textureContext.strokeStyle = 'rgba(170,205,255,0.7)';
       textureContext.stroke();
 
     }
@@ -1119,7 +1379,7 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true) {
     textureContext.stroke();
 
     textureContext.lineWidth = 1;
-    textureContext.strokeStyle = 'rgba(255,255,255,0.7)';
+    textureContext.strokeStyle = neighborHighlight ? 'rgba(125, 211, 252, 0.9)' : 'rgba(255,255,255,0.7)';
     textureContext.stroke();
 
     textureContext.restore();
@@ -1261,9 +1521,14 @@ function buildCountryMetadata(countryData, geoFeatures) {
     iso3Map.set(iso3, item);
     item.altNames.forEach(alias => {
       const key = normalizeName(alias);
+      const keyCompact = key.replace(/\s+/g, '');
       if (!nameMap.has(key)) nameMap.set(key, item);
+      if (keyCompact && !nameMapCompact.has(keyCompact)) nameMapCompact.set(keyCompact, item);
     });
-    nameMap.set(normalizeName(item.name), item);
+    const primaryKey = normalizeName(item.name);
+    const primaryKeyCompact = primaryKey.replace(/\s+/g, '');
+    nameMap.set(primaryKey, item);
+    nameMapCompact.set(primaryKeyCompact, item);
   });
 
   geoFeatures.forEach(feature => {
@@ -1332,27 +1597,53 @@ function findCountryByName(value) {
   const raw = (value || '').trim();
   const key = normalizeName(raw);
   if (!key) return null;
+  const keyCompact = key.replace(/\s+/g, '');
+  if (!keyCompact) return null;
 
+  // 1. Match esatto (con spazi normalizzati)
   if (nameMap.has(key)) return nameMap.get(key);
 
-  const parts = key.split(' ');
-  for (const [name, country] of nameMap) {
-    for (const p of parts) {
-      if (name === p) return country;
-    }
-  }
+  // 2. Match esatto ignorando gli spazi: risolve "sudafrica", "southafrica",
+  //    "republicofsouthafrica" ecc. quando l'utente scrive tutto attaccato.
+  if (nameMapCompact.has(keyCompact)) return nameMapCompact.get(keyCompact);
 
-  let best = null;
-  let bestLen = 0;
-  for (const [name, country] of nameMap) {
-    if (name.includes(key) || key.includes(name)) {
-      if (name.length > bestLen) {
-        best = country;
-        bestLen = name.length;
+  // 3. Match "per prefisso": l'utente sta ancora scrivendo (es. "sudaf...").
+  //    Richiede almeno 4 caratteri per evitare falsi positivi con sigle
+  //    corte, e preferisce l'alias più corto/specifico tra quelli che
+  //    iniziano con il testo digitato.
+  if (keyCompact.length >= 4) {
+    let prefixBest = null;
+    let prefixBestLen = Infinity;
+    for (const [name, country] of nameMapCompact) {
+      if (name.length >= 4 && name.startsWith(keyCompact) && name.length < prefixBestLen) {
+        prefixBest = country;
+        prefixBestLen = name.length;
       }
     }
+    if (prefixBest) return prefixBest;
   }
-  return best;
+
+  // 4. Fallback fuzzy per sottostringa. Gli alias più corti di 5 caratteri
+  //    (sigle ISO a 2-3 lettere come "AF", "FR", "ZAF"...) sono esclusi
+  //    apposta: altrimenti finiscono per comparire per puro caso dentro
+  //    stringhe più lunghe digitate senza spazi (es. "af" dentro
+  //    "sudafrica" faceva matchare erroneamente l'Afghanistan).
+  if (keyCompact.length >= 5) {
+    let best = null;
+    let bestLen = 0;
+    for (const [name, country] of nameMapCompact) {
+      if (name.length < 5) continue;
+      if (name.includes(keyCompact) || keyCompact.includes(name)) {
+        if (name.length > bestLen) {
+          best = country;
+          bestLen = name.length;
+        }
+      }
+    }
+    if (best) return best;
+  }
+
+  return null;
 }
 
 function normalizeName(str) {
@@ -1376,6 +1667,39 @@ function haversineDistance(p1, p2) {
   const lat2 = p2.lat * Math.PI / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function computeShortestPathCodes(start, target) {
+  if (!start || !target) return null;
+  if (start.code === target.code) return [start.code];
+
+  const parent = new Map();
+  const visited = new Set([start.code]);
+  const queue = [start];
+
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur.code === target.code) break;
+    for (const b of cur.borders) {
+      const neigh = iso3Map.get(b);
+      if (!neigh || visited.has(neigh.code)) continue;
+      visited.add(neigh.code);
+      parent.set(neigh.code, cur.code);
+      queue.push(neigh);
+    }
+  }
+
+  if (!visited.has(target.code)) return null;
+
+  const path = [target.code];
+  let cur = target.code;
+  while (cur !== start.code) {
+    cur = parent.get(cur);
+    if (!cur) return null;
+    path.push(cur);
+  }
+  path.reverse();
+  return path;
 }
 
 function computeReachableWithDistance(start) {

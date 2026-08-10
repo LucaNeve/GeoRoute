@@ -138,12 +138,34 @@
       <div id="victoryBadge" class="modal-icon">🏆</div>
       <h2 id="victoryTitle" class="modal-title">Vittoria!</h2>
       <p id="victoryMessage" class="modal-message"></p>
-      
+
+      <div id="victoryStats" class="victory-stats hidden">
+        <div class="stat-pill">
+          <span class="stat-label">I tuoi passi</span>
+          <span id="statYourSteps" class="stat-value">-</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-label">Percorso minimo</span>
+          <span id="statShortestSteps" class="stat-value">-</span>
+        </div>
+      </div>
+
+      <div id="victoryReviewActions" class="modal-actions hidden">
+        <button id="reviewMyPathButton" class="btn secondary-btn">Rivedi il mio percorso</button>
+        <button id="reviewShortestPathButton" class="btn secondary-btn">Rivedi il percorso più breve</button>
+      </div>
+
       <div class="modal-actions">
         <button id="playAgainButton" class="btn primary-btn">Gioca ancora</button>
         <button id="closeVictoryButton" class="btn secondary-btn">Chiudi</button>
       </div>
     </div>
+  </div>
+
+  <!-- Barra flottante mostrata durante l'anteprima di un percorso -->
+  <div id="pathReviewBar" class="path-review-bar hidden">
+    <span id="pathReviewLabel">Anteprima percorso</span>
+    <button id="backToSummaryButton" class="btn primary-btn small-btn">← Torna al riepilogo</button>
   </div>
 
   <!-- App Script module -->
