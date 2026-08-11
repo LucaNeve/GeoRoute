@@ -60,6 +60,21 @@
   <!-- Country Tooltip on Hover -->
   <div id="countryTooltip" class="country-tooltip hidden"></div>
 
+  <!-- Tutorial Overlay (appare solo la prima volta) -->
+  <div id="tutorialOverlay" class="modal-overlay">
+    <div class="modal-card text-center">
+      <h2 class="modal-title">🌍 GeoRoute</h2>
+      <p class="modal-message" style="margin-bottom: 16px;">
+        Parti dal <span style="color:#00c853;font-weight:bold;">pallino verde</span> e raggiungi il
+        <span style="color:#dc143c;font-weight:bold;">pallino rosso</span>.<br />
+        <strong>Digita il nome di uno stato confinante</strong> per avanzare.<br />
+        Ogni paese visitato viene tracciato nella barra laterale.<br />
+        Trova il percorso più breve!
+      </p>
+      <button id="tutorialCloseBtn" class="btn primary-btn full-width">Inizia a giocare!</button>
+    </div>
+  </div>
+
   <!-- Settings / Game Options Menu Modal -->
   <div id="settingsMenu" class="modal-overlay hidden">
     <div class="modal-card">
@@ -72,6 +87,7 @@
       <div class="setting-group">
         <label class="setting-label">Modalità</label>
         <div class="button-grid" data-choice-group="mode">
+          <!-- Le prime tre affiancate, l'ultima (Personalizzata) andrà a capo full-width grazie al CSS -->
           <button class="choice-btn active" data-mode="standard">Standard</button>
           <button class="choice-btn" data-mode="speedrun">Speedrun</button>
           <button class="choice-btn" data-mode="hardcore">Hardcore</button>

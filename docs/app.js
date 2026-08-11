@@ -41,7 +41,6 @@ const shortestPathList = document.getElementById('shortestPathList');
    ========================================================================== */
 const COLOR_CURRENT = 'rgba(0, 200, 83, 0.98)';
 const COLOR_TARGET = 'rgba(220, 20, 60, 0.98)';
-const MICROSTATE_ISO3 = new Set(['MCO', 'SMR', 'VAT', 'LIE', 'AND', 'MLT']);
 
 const textureWidth = 4096;
 const textureHeight = 2048;
@@ -104,11 +103,27 @@ function initialize([topology, countryData]) {
   buildCountryMetadata(countryData, geo.features);
   initThree();
   setupControls();
-  if (countryInput) countryInput.disabled = false;
-  if (submitButton) submitButton.disabled = false;
   document.title = 'GeoRoute';
-  startNewGame();
   animate();
+
+  // Mostra sempre il tutorial all'avvio
+  const tutorialOverlay = document.getElementById('tutorialOverlay');
+  const tutorialCloseBtn = document.getElementById('tutorialCloseBtn');
+  if (tutorialOverlay && tutorialCloseBtn) {
+    tutorialOverlay.classList.remove('hidden');
+    tutorialCloseBtn.addEventListener('click', () => {
+      tutorialOverlay.classList.add('hidden');
+      startGame();
+    }, { once: true });
+  } else {
+    startGame();
+  }
+
+  function startGame() {
+    startNewGame();
+    if (countryInput) countryInput.disabled = false;
+    if (submitButton) submitButton.disabled = false;
+  }
 }
 
 function setupControls() {
@@ -441,7 +456,9 @@ function startNewGame({ isSpeedrunAdvance = false } = {}) {
     target,
     visited: new Set([start.code]),
     path: [start.code],
-    shortestPath: computeShortestPathCodes(start, target)
+    shortestPath: computeShortestPathCodes(start, target),
+    errors: 0,               // contatore errori
+    maxErrors: selectedGameMode === 'hardcore' ? 0 : 3   // limite errori
   };
 
   if (countryInput) {
@@ -463,7 +480,7 @@ function startNewGame({ isSpeedrunAdvance = false } = {}) {
   }
 
   updateLabels();
-  if (!isSpeedrunAdvance) setStatus('');
+  if (!isSpeedrunAdvance) setStatus('🏁 Inserisci il nome di un paese confinante per raggiungere la meta!');
   renderTexture();
   hideVictoryOverlay();
 }
@@ -474,27 +491,29 @@ function submitMove() {
 
   const next = findCountryByName(text);
   if (!next) {
-    setStatus('Stato non riconosciuto.');
+    handleError('Stato non riconosciuto.');
     return;
   }
 
   if (next.code === game.current.code) {
-    setStatus('Sei già in questo stato.');
+    handleError('Sei già in questo stato.');
     return;
   }
 
   if (!game.current.borders.includes(next.code)) {
-    setStatus(`${next.name} non è confinante.`);
+    handleError(`${next.name} non è confinante.`);
     return;
   }
 
   const path = game.path || [];
   const prevCode = path.length >= 2 ? path[path.length - 2] : null;
   if (game.visited.has(next.code) && next.code !== prevCode) {
-    setStatus('Hai già attraversato questo stato.');
+    handleError('Hai già attraversato questo stato.');
     return;
   }
 
+  // Mossa valida: azzera il contatore errori? No, manteniamo gli errori accumulati.
+  // Procediamo con la mossa.
   if (next.code === prevCode) {
     const removed = path.pop();
     game.visited.delete(removed);
@@ -508,6 +527,9 @@ function submitMove() {
   updateLabels();
   renderTexture();
   countryInput.value = '';
+
+  // Animazione di transizione: centra il paese appena raggiunto
+  centerOnCountry(game.current);
 
   if (game.current.code === game.target.code) {
     if (selectedGameMode === 'speedrun') {
@@ -528,6 +550,23 @@ function submitMove() {
   }
 }
 
+// Funzione per gestire gli errori
+function handleError(message) {
+  if (!game) return;
+  game.errors++;
+  setStatus(message);
+
+  // Verifica se ha superato il limite
+  if (game.errors > game.maxErrors) {
+    setStatus('Hai esaurito gli errori! Partita terminata.');
+    openGameOverlay('defeat');
+  } else {
+    // Mostra quanti errori rimangono
+    const remaining = game.maxErrors - game.errors + 1;
+    setStatus(`${message} (${remaining} errore${remaining === 1 ? '' : 'i'} rimasto${remaining === 1 ? '' : 'i'})`);
+  }
+}
+
 function doUndo() {
   if (!game || !game.path || game.path.length <= 1) return;
   const removed = game.path.pop();
@@ -536,6 +575,8 @@ function doUndo() {
   game.current = iso3Map.get(last);
   updateLabels();
   renderTexture();
+  // Centra sul paese dopo l'undo
+  centerOnCountry(game.current);
 }
 
 function formatTimerText(totalSeconds) {
@@ -635,7 +676,19 @@ function openGameOverlay(mode) {
     }
     if (playAgainButton) playAgainButton.textContent = 'Rigioca';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+  } else if (mode === 'defeat') {
+    // Modalità sconfitta
+    const modeName = selectedGameMode === 'hardcore' ? 'Hardcore' : selectedGameMode === 'speedrun' ? 'Speedrun' : 'Standard';
+    const maxErrors = game?.maxErrors || 0;
+    if (victoryBadge) victoryBadge.textContent = '💥';
+    if (victoryTitle) victoryTitle.textContent = 'Hai perso!';
+    if (victoryMessage) {
+      victoryMessage.textContent = `Hai commesso più di ${maxErrors} errori in modalità ${modeName}. Vuoi riprovare?`;
+    }
+    if (playAgainButton) playAgainButton.textContent = 'Riprova';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
   } else {
+    // Modalità default (setup)
     if (victoryBadge) victoryBadge.textContent = '🌍';
     if (victoryTitle) victoryTitle.textContent = 'Nuova partita';
     if (victoryMessage) victoryMessage.textContent = 'Scegli la modalità, difficoltà e continente, poi inizia la sfida.';
@@ -1036,6 +1089,7 @@ function onPointerDown(event) {
 
   if (activePointers.size === 1) {
     isDragging = true;
+    canvas.classList.add('dragging');
     hideTooltip();
     try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
     lastPointerPos = { x: event.clientX, y: event.clientY };
@@ -1049,6 +1103,7 @@ function onPointerMove(event) {
 
   if (activePointers.size === 2) {
     isDragging = false;
+    canvas.classList.remove('dragging');
     const pts = Array.from(activePointers.values());
     const curDiff = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 
@@ -1078,7 +1133,7 @@ function onPointerMove(event) {
     zoomScale = Math.max(0.35, Math.min(1.6, zoomScale));
   }
 
-  const rotSpeed = (Math.PI / refDimension) * 1.35 * zoomScale;
+  const rotSpeed = (Math.PI / refDimension) * 0.55 * zoomScale;
   const yaw = dx * rotSpeed;
   const pitch = dy * rotSpeed;
 
@@ -1098,6 +1153,7 @@ function onPointerUp(event) {
       try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
     }
     isDragging = false;
+    canvas.classList.remove('dragging');
     lastPointerPos = null;
   }
 }
@@ -1111,8 +1167,35 @@ function onWheel(event) {
   camera.position.z = Math.max(zoomMinZ, Math.min(zoomMaxZ, camera.position.z));
 }
 
+// Funzione che restituisce i paesi attualmente colorati (percorso, corrente, obiettivo, vicini)
+function getColoredCountries() {
+  if (!game) return [];
+
+  if (previewState && Array.isArray(previewState.codes)) {
+    const codes = new Set(previewState.codes);
+    const list = [];
+    codes.forEach(code => {
+      const c = iso3Map.get(code);
+      if (c && c.feature) list.push(c);
+    });
+    return list;
+  }
+
+  const codes = new Set(game.path || []);
+  if (game.target) codes.add(game.target.code);
+  if (selectedGameMode !== 'hardcore' && game.current && Array.isArray(game.current.borders)) {
+    game.current.borders.forEach(code => codes.add(code));
+  }
+  const list = [];
+  codes.forEach(code => {
+    const c = iso3Map.get(code);
+    if (c && c.feature) list.push(c);
+  });
+  return list;
+}
+
 function onCanvasHover(event) {
-  if (isDragging || !game || !globe || !camera) {
+  if (isDragging || !globe || !camera) {
     hideTooltip();
     return;
   }
@@ -1130,10 +1213,10 @@ function onCanvasHover(event) {
   const localPoint = worldPoint.applyQuaternion(invQ);
   const ll = vectorToLatLon(localPoint);
 
-  const candidates = getColoredCountries();
+  const colored = getColoredCountries();
   let found = null;
-  for (const country of candidates) {
-    if (pointInFeatureLatLon(ll.lon, ll.lat, country.feature)) {
+  for (const country of colored) {
+    if (country.feature && pointInFeatureLatLon(ll.lon, ll.lat, country.feature)) {
       found = country;
       break;
     }
@@ -1141,29 +1224,6 @@ function onCanvasHover(event) {
 
   if (found) showTooltip(event.clientX, event.clientY, found.name);
   else hideTooltip();
-}
-
-function getColoredCountries() {
-  if (!game) return [];
-
-  if (previewState && Array.isArray(previewState.codes)) {
-    const codes = new Set(previewState.codes);
-    const list = [];
-    codes.forEach(code => {
-      const c = iso3Map.get(code);
-      if (c && c.feature) list.push(c);
-    });
-    return list;
-  }
-
-  const codes = new Set(game.path || []);
-  if (game.target) codes.add(game.target.code);
-  const list = [];
-  codes.forEach(code => {
-    const c = iso3Map.get(code);
-    if (c && c.feature) list.push(c);
-  });
-  return list;
 }
 
 /* ==========================================================================
@@ -1180,7 +1240,7 @@ function renderTexture() {
   } else {
     geoDrawAllCountries();
     drawIslandConnections();
-    drawSmallCountryDots();
+    // drawSmallCountryDots() rimosso
   }
 
   if (globeMaterial && globeMaterial.map) globeMaterial.map.needsUpdate = true;
@@ -1238,12 +1298,7 @@ function geoDrawPathPreview(preview) {
   }
   textureContext.restore();
 
-  if (codes.length) {
-    drawLocationPinAtCountry(codes[0], COLOR_CURRENT, { radius: 15 });
-    if (codes.length > 1) {
-      drawLocationPinAtCountry(codes[codes.length - 1], COLOR_TARGET, { radius: 15 });
-    }
-  }
+  // Rimosso disegno dei pin di inizio/fine
 }
 
 function geoDrawAllCountries() {
@@ -1273,8 +1328,6 @@ function geoDrawAllCountries() {
     const isVisited = pathIndex.has(country.code);
     const isNeighbor = !isCurrent && !isTarget && !isVisited && neighborCodes.has(country.code);
 
-    // In modalità Hardcore non si mostrano altri paesi/continenti:
-    // Disegniamo solo i paesi visitati (percorso) e l'obiettivo. Il resto è mare.
     if (selectedGameMode === 'hardcore' && !isVisited && !isTarget) {
       continue;
     }
@@ -1425,79 +1478,6 @@ function drawIslandConnections() {
       textureContext.stroke();
     });
   });
-  textureContext.restore();
-}
-
-function drawSmallCountryDots() {
-  if (!game) return;
-  const currentCode = game.current?.code;
-  const targetCode = game.target?.code;
-  if (currentCode) drawMicroMarkerIfNeeded(currentCode, COLOR_CURRENT);
-  if (targetCode && targetCode !== currentCode) drawMicroMarkerIfNeeded(targetCode, COLOR_TARGET);
-}
-
-function drawMicroMarkerIfNeeded(code, color) {
-  const country = iso3Map.get(code);
-  if (!country || !country.feature) return;
-  const bounds = computeFeaturePixelBounds(country.feature);
-  if (!bounds) return;
-  const w = bounds.maxX - bounds.minX;
-  const h = bounds.maxY - bounds.minY;
-  const pixelThreshold = 12;
-  const isMicro = MICROSTATE_ISO3.has(code);
-  if (isMicro || Math.max(w, h) <= pixelThreshold) {
-    drawLocationPinAtCountry(code, color, { radius: 17 });
-  }
-}
-
-function drawLocationPinAtCountry(code, color, options) {
-  const country = iso3Map.get(code);
-  if (!country || !country.feature) return;
-  const c = computeFeatureCentroid(country.feature);
-  const [cx, cy] = projectPoint([c.lon, c.lat]);
-  drawLocationPin(cx, cy, color, options);
-}
-
-function drawLocationPin(tipX, tipY, color, { radius = 16 } = {}) {
-  const delta = (34 * Math.PI) / 180;
-  const legLength = radius * 2.1;
-  const headCenterY = tipY - legLength;
-  const leftAngle = Math.PI / 2 + delta;
-  const rightAngle = Math.PI / 2 - delta;
-  const leftX = tipX - radius * Math.sin(delta);
-  const leftY = headCenterY + radius * Math.cos(delta);
-
-  textureContext.save();
-
-  textureContext.beginPath();
-  textureContext.ellipse(tipX, tipY + 3, radius * 0.55, radius * 0.2, 0, 0, Math.PI * 2);
-  textureContext.fillStyle = 'rgba(0,0,0,0.4)';
-  textureContext.fill();
-
-  textureContext.beginPath();
-  textureContext.moveTo(tipX, tipY);
-  textureContext.lineTo(leftX, leftY);
-  textureContext.arc(tipX, headCenterY, radius, leftAngle, rightAngle, false);
-  textureContext.closePath();
-
-  textureContext.shadowColor = 'rgba(0,0,0,0.55)';
-  textureContext.shadowBlur = 5;
-  textureContext.shadowOffsetY = 2;
-  textureContext.fillStyle = color;
-  textureContext.fill();
-  textureContext.shadowColor = 'transparent';
-  textureContext.shadowBlur = 0;
-  textureContext.shadowOffsetY = 0;
-
-  textureContext.lineWidth = 2.4;
-  textureContext.strokeStyle = 'rgba(255,255,255,0.95)';
-  textureContext.stroke();
-
-  textureContext.beginPath();
-  textureContext.arc(tipX, headCenterY, radius * 0.4, 0, Math.PI * 2);
-  textureContext.fillStyle = 'rgba(255,255,255,0.95)';
-  textureContext.fill();
-
   textureContext.restore();
 }
 
