@@ -1183,9 +1183,7 @@ function getColoredCountries() {
 
   const codes = new Set(game.path || []);
   if (game.target) codes.add(game.target.code);
-  if (selectedGameMode !== 'hardcore' && game.current && Array.isArray(game.current.borders)) {
-    game.current.borders.forEach(code => codes.add(code));
-  }
+  // NON aggiungiamo più i vicini
   const list = [];
   codes.forEach(code => {
     const c = iso3Map.get(code);
@@ -1193,7 +1191,6 @@ function getColoredCountries() {
   });
   return list;
 }
-
 function onCanvasHover(event) {
   if (isDragging || !globe || !camera) {
     hideTooltip();
