@@ -59,7 +59,7 @@ let countries = [];
 let renderCountries = [];
 let iso3Map = new Map();
 let nameMap = new Map();
-let nameMapCompact = new Map(); // alias senza spazi, per matching più tollerante
+let nameMapCompact = new Map();
 let featureByIso = new Map();
 let game = null;
 let isDragging = false;
@@ -82,10 +82,8 @@ let lastPointerPos = null;
 let keyboardOpen = false;
 let savedCameraZ = null;
 
-// Anteprima percorso (riepilogo finale)
-let previewState = null; // { codes: [...], mode: 'mine' | 'shortest' }
+let previewState = null;
 
-// Gestione Touch & Pinch-to-Zoom
 const activePointers = new Map();
 let prevTouchDiff = -1;
 
@@ -208,55 +206,33 @@ function setupControls() {
   if (targetBox) targetBox.addEventListener('click', () => { if (game && game.target) centerOnCountryKeepView(game.target); });
 
   window.addEventListener('keydown', (e) => {
-
     if (!game) return;
-
     const key = e.key;
 
-    // Undo
-    const undo =
-      (e.ctrlKey || e.metaKey) &&
-      key.toLowerCase() === 'z';
-
-    const altLeft =
-      e.altKey &&
-      key === 'ArrowLeft';
-
+    const undo = (e.ctrlKey || e.metaKey) && key.toLowerCase() === 'z';
+    const altLeft = e.altKey && key === 'ArrowLeft';
 
     if (undo || altLeft) {
-
       if (selectedGameMode !== 'hardcore') {
         doUndo();
       }
-
       return;
     }
 
-
-    // Chiudi menu / overlay
     if (key === 'Escape') {
-
-      if (settingsMenu &&
-          !settingsMenu.classList.contains('hidden')) {
-
+      if (settingsMenu && !settingsMenu.classList.contains('hidden')) {
         settingsMenu.classList.add('hidden');
         return;
       }
-
       if (previewState) {
         endPathReview();
         return;
       }
-
       hideVictoryOverlay();
       return;
     }
 
-
-    // Centra globo (MAI se l'utente sta scrivendo in un campo di testo,
-    // altrimenti non si potrebbero digitare stati con lo spazio, es. "Sud Africa")
     if (key === ' ') {
-
       const activeEl = document.activeElement;
       const isTypingField = activeEl && (
         activeEl.tagName === 'INPUT' ||
@@ -267,38 +243,20 @@ function setupControls() {
       if (isTypingField) return;
 
       e.preventDefault();
-
       if (globe) {
-
         const invQ = globe.quaternion.clone().invert();
-        const localCenter =
-          new THREE.Vector3(0,0,1)
-          .applyQuaternion(invQ);
-
+        const localCenter = new THREE.Vector3(0,0,1).applyQuaternion(invQ);
         const ll = vectorToLatLon(localCenter);
-
-        centerLonLatWithEquator(
-          ll.lon,
-          ll.lat
-        );
+        centerLonLatWithEquator(ll.lon, ll.lat);
       }
-
       return;
     }
 
-
-    // Focus input
     if (key === '/') {
-
       e.preventDefault();
-
-      if (countryInput) {
-        countryInput.focus();
-      }
-
+      if (countryInput) countryInput.focus();
       return;
     }
-
   });
 }
 
@@ -308,19 +266,16 @@ function setActiveMode(mode) {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
 
-  // Gestione visibilità Custom Match Options
   const customContainer = document.getElementById('customGameOptions');
   if (customContainer) {
     customContainer.classList.toggle('hidden', mode !== 'custom');
   }
 
-  // Gestione visibilità Durata Speedrun
   const speedrunDurationGroup = document.getElementById('speedrunDurationGroup');
   if (speedrunDurationGroup) {
     speedrunDurationGroup.classList.toggle('hidden', mode !== 'speedrun');
   }
 
-  // Disabilita Difficoltà e Continente se in modalità Personalizzata
   const diffGroup = document.querySelector('[data-choice-group="difficulty"]')?.closest('.setting-group');
   const contGroup = document.querySelector('[data-choice-group="continent"]')?.closest('.setting-group');
 
@@ -337,20 +292,15 @@ function setActiveMode(mode) {
   const suggestionGroup = document.getElementById('toggleSuggestions')?.closest('.setting-group');
 
   if (suggestionGroup) {
-
     if (mode === 'hardcore') {
-
       suggestionGroup.classList.add('disabled-group');
-
       if (toggleSuggestions) {
         toggleSuggestions.checked = false;
         showSuggestions = false;
       }
-
     } else {
       suggestionGroup.classList.remove('disabled-group');
     }
-
   }
 }
 
@@ -384,10 +334,6 @@ function setStatus(text, isSuccess = false) {
 /* ==========================================================================
    4. GAME LOGIC & TIMER
    ========================================================================== */
-// Sceglie una coppia partenza/arrivo in base alla modalità e alle opzioni
-// correnti. Ritorna { start, target } oppure null (impostando un messaggio
-// di stato) se la selezione non è possibile, ad es. in modalità Personalizzata
-// con input non validi.
 function pickGamePair() {
   let start = null;
   let target = null;
@@ -395,9 +341,6 @@ function pickGamePair() {
   const diff = (document.querySelector('[data-choice-group="difficulty"] .active') || {}).dataset?.diff || 'medium';
   const continent = (document.querySelector('[data-choice-group="continent"] .active') || {}).dataset?.cont || 'all';
 
-  /* ==========================================================================
-     1. MODALITÀ PERSONALIZZATA (CUSTOM)
-     ========================================================================== */
   if (selectedGameMode === 'custom') {
     const customStartInput = document.getElementById('customStartInput');
     const customTargetInput = document.getElementById('customTargetInput');
@@ -424,9 +367,6 @@ function pickGamePair() {
     start = customStart;
     target = customTarget;
   } else {
-    /* ==========================================================================
-       2. MODALITÀ STANDARD / SPEEDRUN / HARDCORE / FOG (Partenza + Arrivo nello stesso continente)
-       ========================================================================== */
     function candidatePool() {
       if (continent && continent !== 'all') {
         return countries.filter(c => c.region === continent);
@@ -442,7 +382,6 @@ function pickGamePair() {
 
       const distMap = computeReachableWithDistance(candidate);
 
-      // Filtra i target raggiungibili garantendo che anche l'arrivo sia nello STESSO continente
       const targets = Array.from(distMap.entries()).filter(([code, d]) => {
         if (code === candidate.code) return false;
         const targetCountry = iso3Map.get(code);
@@ -482,10 +421,6 @@ function pickGamePair() {
   return { start, target };
 }
 
-// Avvia una nuova partita. Con isSpeedrunAdvance=true viene invocata
-// internamente per passare alla sfida successiva di uno Speedrun già avviato:
-// in quel caso NON si tocca il timer, NON si apre nessun overlay/banner e il
-// conteggio delle sfide non viene azzerato.
 function startNewGame({ isSpeedrunAdvance = false } = {}) {
   if (!countries.length) return;
 
@@ -576,9 +511,6 @@ function submitMove() {
 
   if (game.current.code === game.target.code) {
     if (selectedGameMode === 'speedrun') {
-      // In Speedrun non si apre nessun banner/overlay tra una sfida e la
-      // successiva: solo un breve messaggio, poi riparte subito un'altra
-      // sfida, finché non scade il timer.
       speedrunChallenges++;
       setStatus(`Sfida ${speedrunChallenges} completata! Via alla prossima…`, true);
       setTimeout(() => {
@@ -682,14 +614,10 @@ function openGameOverlay(mode) {
       if (victoryReviewActions) {
         victoryReviewActions.classList.remove('hidden');
         if (reviewShortestPathButton) {
-          // Se hai già fatto il percorso minimo, non serve confrontarlo con se stesso
           reviewShortestPathButton.classList.toggle('hidden', yourSteps <= shortestSteps);
         }
       }
 
-      // Confronto passo-passo: la tua lista di stati accanto a quella del
-      // percorso più breve, così ogni tappa è messa a paragone senza dover
-      // per forza aprire l'anteprima sul globo.
       if (pathComparison && game.path && game.shortestPath) {
         fillPathList(yourPathList, game.path);
         fillPathList(shortestPathList, game.shortestPath);
@@ -725,7 +653,7 @@ function hideVictoryOverlay() {
 }
 
 /* ==========================================================================
-   4bis. REVISIONE PERCORSO (riepilogo finale)
+   4bis. REVISIONE PERCORSO
    ========================================================================== */
 function startPathReview(mode) {
   if (!game) return;
@@ -761,7 +689,6 @@ function fitViewToPath(codes) {
     .map(c => computeFeatureCentroid(c.feature));
   if (!points.length) return;
 
-  // Centro = media vettoriale (sulla sfera) dei centroidi coinvolti
   let vx = 0, vy = 0, vz = 0;
   const vecs = points.map(p => latLonToVector(p.lon, p.lat));
   vecs.forEach(v => { vx += v.x; vy += v.y; vz += v.z; });
@@ -769,7 +696,6 @@ function fitViewToPath(codes) {
   if (avg.lengthSq() < 1e-6) avg.set(0, 0, 1);
   avg.normalize();
 
-  // Distanza angolare massima dal centro: serve per capire quanto zoomare
   let maxAngle = 0;
   vecs.forEach(v => {
     const angle = avg.angleTo(v);
@@ -815,14 +741,12 @@ function updateLabels() {
   const sidebar = document.getElementById('timelineSidebar');
 
   if (sidebar) {
-
     if (selectedGameMode === 'hardcore') {
       sidebar.classList.add('hidden');
       return;
     }
 
     sidebar.classList.remove('hidden');
-
     sidebar.innerHTML = '';
     (game.path || []).forEach((code, idx) => {
       const c = iso3Map.get(code);
@@ -955,45 +879,30 @@ function initThree() {
 
   window.addEventListener('resize', resize);
   if (window.visualViewport) {
-
     window.visualViewport.addEventListener('resize', () => {
-
       const viewportHeight = window.visualViewport.height;
       const windowHeight = window.innerHeight;
 
-      // Tastiera aperta
       if (viewportHeight < windowHeight * 0.8) {
-
         keyboardOpen = true;
-
         if (camera) {
           savedCameraZ = camera.position.z;
         }
-
         return;
       }
 
-
-      // Tastiera chiusa
       if (keyboardOpen) {
-
         keyboardOpen = false;
-
         resize();
-
         if (camera && savedCameraZ !== null) {
           camera.position.z = savedCameraZ;
         }
-
         savedCameraZ = null;
-
         return;
       }
 
       resize();
-
     });
-
   }
   resize();
 
@@ -1154,11 +1063,6 @@ function onPointerMove(event) {
 
   if (!isDragging || !lastPointerPos || !globe) return;
 
-  // Rotazione a "delta" incrementale: lo spostamento orizzontale del mouse
-  // ruota sempre il globo attorno all'asse verticale dello schermo, quello
-  // verticale attorno all'asse orizzontale. Niente più proiezioni su sfera
-  // e angoli via arcoseno: risultato lineare, prevedibile e senza "scatti"
-  // quando ci si muove velocemente o vicino al bordo del globo.
   const dx = event.clientX - lastPointerPos.x;
   const dy = event.clientY - lastPointerPos.y;
   lastPointerPos = { x: event.clientX, y: event.clientY };
@@ -1168,8 +1072,6 @@ function onPointerMove(event) {
   const rect = canvas.getBoundingClientRect();
   const refDimension = Math.min(rect.width, rect.height) || 1;
 
-  // Sensibilità relativa allo zoom corrente: più sei vicino, più il
-  // trascinamento è "lento" in termini angolari (comportamento naturale).
   let zoomScale = 1;
   if (baseFitDistance && camera && camera.position) {
     zoomScale = camera.position.z / baseFitDistance;
@@ -1183,8 +1085,6 @@ function onPointerMove(event) {
   const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
   const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
 
-  // Applicate in spazio mondo (non locale al globo), così la sensibilità
-  // resta coerente indipendentemente da come il globo è già ruotato.
   globe.quaternion.premultiply(qYaw).premultiply(qPitch);
 }
 
@@ -1246,10 +1146,6 @@ function onCanvasHover(event) {
 function getColoredCountries() {
   if (!game) return [];
 
-  // Durante l'anteprima di un percorso (il tuo o quello più breve) i paesi
-  // "attivi" sono quelli evidenziati nella preview, non necessariamente
-  // quelli del tuo percorso: altrimenti passando il mouse sui paesi del
-  // percorso più breve che non hai attraversato tu, il nome non compariva.
   if (previewState && Array.isArray(previewState.codes)) {
     const codes = new Set(previewState.codes);
     const list = [];
@@ -1296,20 +1192,15 @@ function geoDrawPathPreview(preview) {
   const indexOf = new Map();
   codes.forEach((code, i) => indexOf.set(code, i));
 
-  // Palette diversa per distinguere "il tuo percorso" dal "percorso più breve"
   const fromColor = preview.mode === 'shortest' ? [56, 189, 248, 0.95] : [200, 255, 180, 0.98];
   const toColor = preview.mode === 'shortest' ? [124, 58, 237, 0.95] : [0, 200, 83, 0.98];
   const lineColor = preview.mode === 'shortest' ? 'rgba(56, 189, 248, 0.85)' : 'rgba(0, 200, 83, 0.85)';
 
-  // Tutti gli altri paesi: sfondo neutro, ma con i confini ben visibili
-  // (prima qui i bordi non venivano disegnati e la mappa sembrava quella
-  // della modalità Hardcore: ora si vede sempre la geografia completa).
   for (const country of renderCountries) {
     if (!country.feature || codeSet.has(country.code)) continue;
     drawGeoFeature(country.feature, '#1b2433', true);
   }
 
-  // Paesi del percorso, con gradiente in base all'ordine di attraversamento
   const lastIdx = Math.max(1, codes.length - 1);
   codes.forEach(code => {
     const country = iso3Map.get(code);
@@ -1321,7 +1212,6 @@ function geoDrawPathPreview(preview) {
 
   drawIslandConnections();
 
-  // Linea che collega i centroidi nell'ordine del percorso
   textureContext.save();
   textureContext.lineWidth = 3;
   textureContext.strokeStyle = lineColor;
@@ -1348,8 +1238,6 @@ function geoDrawPathPreview(preview) {
   }
   textureContext.restore();
 
-  // Segnalini di partenza/arrivo: un pin elegante invece del vecchio
-  // cerchio con il numero dentro.
   if (codes.length) {
     drawLocationPinAtCountry(codes[0], COLOR_CURRENT, { radius: 15 });
     if (codes.length > 1) {
@@ -1367,14 +1255,9 @@ function geoDrawAllCountries() {
     game.path.forEach((code, i) => pathIndex.set(code, i));
   }
 
-  // Quality-of-life: evidenzia i paesi confinanti con quello attuale, così
-  // sono più facili da individuare a colpo d'occhio. Disattivato in
-  // Hardcore (nessun aiuto visivo per design) e in Nebbia (rivelerebbe
-  // paesi che la modalità vuole tenere nascosti).
   const neighborCodes = new Set();
   if (
     selectedGameMode !== 'hardcore' &&
-    selectedGameMode !== 'fog' &&
     game?.current &&
     Array.isArray(game.current.borders)
   ) {
@@ -1390,13 +1273,14 @@ function geoDrawAllCountries() {
     const isVisited = pathIndex.has(country.code);
     const isNeighbor = !isCurrent && !isTarget && !isVisited && neighborCodes.has(country.code);
 
-    // La Nebbia nasconde solo i "vicini evidenziati" e i collegamenti tra
-    // isole (vedi drawIslandConnections): le sagome dei paesi restano
-    // sempre visibili, esattamente come in Hardcore, così la modalità
-    // resta più clemente di Hardcore invece di essere ancora più punitiva.
+    // In modalità Hardcore non si mostrano altri paesi/continenti:
+    // Disegniamo solo i paesi visitati (percorso) e l'obiettivo. Il resto è mare.
+    if (selectedGameMode === 'hardcore' && !isVisited && !isTarget) {
+      continue;
+    }
 
     let fillStyle = '#2d3748';
-    let drawBorder = selectedGameMode !== 'hardcore' && selectedGameMode !== 'fog';
+    let drawBorder = selectedGameMode !== 'hardcore';
     let neighborHighlight = false;
 
     if (isCurrent) {
@@ -1445,24 +1329,9 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true, neighborHighlight
   textureContext.fill();
 
   if (drawBorder) {
-
     textureContext.save();
-
-    // Bordo modalità nebbia: leggermente evidenziato ma senza l'effetto
-    // "neon" eccessivo di prima (shadowBlur/saturazione ridotti).
-    if (selectedGameMode === 'fog') {
-
-      textureContext.shadowColor = 'rgba(140,190,255,0.45)';
-      textureContext.shadowBlur = 6;
-      textureContext.lineWidth = 2.2;
-      textureContext.strokeStyle = 'rgba(170,205,255,0.7)';
-      textureContext.stroke();
-
-    }
-
     textureContext.shadowBlur = 0;
 
-    // bordo normale
     textureContext.lineWidth = 2.5;
     textureContext.strokeStyle = 'rgba(0,0,0,0.5)';
     textureContext.stroke();
@@ -1472,15 +1341,12 @@ function drawGeoFeature(feature, fillStyle, drawBorder = true, neighborHighlight
     textureContext.stroke();
 
     textureContext.restore();
-
   } else {
-
     textureContext.save();
     textureContext.lineWidth = 2;
     textureContext.strokeStyle = fillStyle;
     textureContext.stroke();
     textureContext.restore();
-
   }
 }
 
@@ -1523,12 +1389,8 @@ function drawRing(points, lonOffset = 0) {
 function drawIslandConnections() {
   if (!islandConnections.length) return;
 
-  // In modalità Nebbia i collegamenti tratteggiati tra isole rivelerebbero
-  // troppa geografia nascosta: li mostriamo quindi solo quando uno dei due
-  // paesi collegati è quello su cui ci troviamo in quel momento.
-  const restrictToCurrent = selectedGameMode === 'fog';
-  const currentCode = game?.current?.code;
-  if (restrictToCurrent && !currentCode) return;
+  const visitedCodes = new Set(game?.path || []);
+  const targetCode = game?.target?.code;
 
   textureContext.save();
   textureContext.setLineDash([6, 7]);
@@ -1536,7 +1398,12 @@ function drawIslandConnections() {
   textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
   
   islandConnections.forEach(({ a, b }) => {
-    if (restrictToCurrent && a !== currentCode && b !== currentCode) return;
+    if (selectedGameMode === 'hardcore') {
+      const aVisible = visitedCodes.has(a) || a === targetCode;
+      const bVisible = visitedCodes.has(b) || b === targetCode;
+      if (!aVisible || !bVisible) return;
+    }
+
     const ca = iso3Map.get(a);
     const cb = iso3Map.get(b);
     if (!ca?.feature || !cb?.feature) return;
@@ -1583,11 +1450,6 @@ function drawMicroMarkerIfNeeded(code, color) {
   }
 }
 
-// Segnalino a forma di "pin" (goccia), stile mappa: molto più leggibile di
-// un semplice pallino colorato e permette di individuare con precisione
-// stati troppo piccoli per avere confini disegnabili (Monaco, San Marino,
-// Vaticano, Liechtenstein, Andorra, Malta...). La punta del pin indica
-// esattamente il punto del globo a cui lo stato corrisponde.
 function drawLocationPinAtCountry(code, color, options) {
   const country = iso3Map.get(code);
   if (!country || !country.feature) return;
@@ -1597,7 +1459,7 @@ function drawLocationPinAtCountry(code, color, options) {
 }
 
 function drawLocationPin(tipX, tipY, color, { radius = 16 } = {}) {
-  const delta = (34 * Math.PI) / 180; // apertura della "coda" del pin
+  const delta = (34 * Math.PI) / 180;
   const legLength = radius * 2.1;
   const headCenterY = tipY - legLength;
   const leftAngle = Math.PI / 2 + delta;
@@ -1607,14 +1469,11 @@ function drawLocationPin(tipX, tipY, color, { radius = 16 } = {}) {
 
   textureContext.save();
 
-  // piccola ombra ellittica a terra, per dare l'idea che il pin "punti"
-  // con precisione al punto esatto sulla mappa
   textureContext.beginPath();
   textureContext.ellipse(tipX, tipY + 3, radius * 0.55, radius * 0.2, 0, 0, Math.PI * 2);
   textureContext.fillStyle = 'rgba(0,0,0,0.4)';
   textureContext.fill();
 
-  // corpo del pin: testa rotonda che si restringe in una punta
   textureContext.beginPath();
   textureContext.moveTo(tipX, tipY);
   textureContext.lineTo(leftX, leftY);
@@ -1634,7 +1493,6 @@ function drawLocationPin(tipX, tipY, color, { radius = 16 } = {}) {
   textureContext.strokeStyle = 'rgba(255,255,255,0.95)';
   textureContext.stroke();
 
-  // foro interno bianco, tipico dei marcatori di mappa
   textureContext.beginPath();
   textureContext.arc(tipX, headCenterY, radius * 0.4, 0, Math.PI * 2);
   textureContext.fillStyle = 'rgba(255,255,255,0.95)';
@@ -1743,17 +1601,9 @@ function findCountryByName(value) {
   const keyCompact = key.replace(/\s+/g, '');
   if (!keyCompact) return null;
 
-  // 1. Match esatto (con spazi normalizzati)
   if (nameMap.has(key)) return nameMap.get(key);
-
-  // 2. Match esatto ignorando gli spazi: risolve "sudafrica", "southafrica",
-  //    "republicofsouthafrica" ecc. quando l'utente scrive tutto attaccato.
   if (nameMapCompact.has(keyCompact)) return nameMapCompact.get(keyCompact);
 
-  // 3. Match "per prefisso": l'utente sta ancora scrivendo (es. "sudaf...").
-  //    Richiede almeno 4 caratteri per evitare falsi positivi con sigle
-  //    corte, e preferisce l'alias più corto/specifico tra quelli che
-  //    iniziano con il testo digitato.
   if (keyCompact.length >= 4) {
     let prefixBest = null;
     let prefixBestLen = Infinity;
@@ -1766,11 +1616,6 @@ function findCountryByName(value) {
     if (prefixBest) return prefixBest;
   }
 
-  // 4. Fallback fuzzy per sottostringa. Gli alias più corti di 5 caratteri
-  //    (sigle ISO a 2-3 lettere come "AF", "FR", "ZAF"...) sono esclusi
-  //    apposta: altrimenti finiscono per comparire per puro caso dentro
-  //    stringhe più lunghe digitate senza spazi (es. "af" dentro
-  //    "sudafrica" faceva matchare erroneamente l'Afghanistan).
   if (keyCompact.length >= 5) {
     let best = null;
     let bestLen = 0;
