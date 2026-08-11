@@ -80,6 +80,16 @@
         </div>
       </div>
 
+      <!-- Durata Speedrun (visibile solo in modalità Speedrun) -->
+      <div id="speedrunDurationGroup" class="setting-group hidden">
+        <label class="setting-label">Durata Speedrun</label>
+        <div class="segmented-control" data-choice-group="duration">
+          <button class="segment-btn" data-duration="60">1 min</button>
+          <button class="segment-btn active" data-duration="180">3 min</button>
+          <button class="segment-btn" data-duration="300">5 min</button>
+        </div>
+      </div>
+
       <!-- Difficoltà (Segmented Control a Pillole) -->
       <div class="setting-group">
         <label class="setting-label">Difficoltà</label>
@@ -147,6 +157,17 @@
         <div class="stat-pill">
           <span class="stat-label">Percorso minimo</span>
           <span id="statShortestSteps" class="stat-value">-</span>
+        </div>
+      </div>
+
+      <div id="pathComparison" class="path-comparison hidden">
+        <div class="path-comparison-col">
+          <span class="path-comparison-title">Il tuo percorso</span>
+          <ol id="yourPathList" class="path-comparison-list"></ol>
+        </div>
+        <div class="path-comparison-col">
+          <span class="path-comparison-title">Percorso più breve</span>
+          <ol id="shortestPathList" class="path-comparison-list"></ol>
         </div>
       </div>
 

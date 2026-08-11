@@ -32,6 +32,9 @@ const reviewShortestPathButton = document.getElementById('reviewShortestPathButt
 const pathReviewBar = document.getElementById('pathReviewBar');
 const pathReviewLabel = document.getElementById('pathReviewLabel');
 const backToSummaryButton = document.getElementById('backToSummaryButton');
+const pathComparison = document.getElementById('pathComparison');
+const yourPathList = document.getElementById('yourPathList');
+const shortestPathList = document.getElementById('shortestPathList');
 
 /* ==========================================================================
    2. CONSTANTS & GLOBAL STATE
@@ -65,6 +68,8 @@ let overlayMode = 'setup';
 let selectedGameMode = 'standard';
 let speedrunTimer = null;
 let speedrunTimeLeft = 60;
+let speedrunDuration = 180;
+let speedrunChallenges = 0;
 
 let sphereRadius = 170;
 let zoomMinZ = 320;
@@ -118,10 +123,14 @@ function setupControls() {
   document.querySelectorAll('[data-cont]').forEach(btn => {
     btn.addEventListener('click', () => setActiveContinent(btn.dataset.cont));
   });
+  document.querySelectorAll('[data-duration]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveDuration(btn.dataset.duration));
+  });
 
   setActiveMode('standard');
   setActiveDifficulty('medium');
   setActiveContinent('all');
+  setActiveDuration('180');
 
   if (toggleSuggestions) {
     toggleSuggestions.checked = showSuggestions;
@@ -160,7 +169,8 @@ function setupControls() {
   if (newGameButton) {
     newGameButton.addEventListener('click', () => {
       if (settingsMenu) settingsMenu.classList.add('hidden');
-      openGameOverlay('setup');
+      hideVictoryOverlay();
+      startNewGame();
     });
   }
 
@@ -304,6 +314,12 @@ function setActiveMode(mode) {
     customContainer.classList.toggle('hidden', mode !== 'custom');
   }
 
+  // Gestione visibilità Durata Speedrun
+  const speedrunDurationGroup = document.getElementById('speedrunDurationGroup');
+  if (speedrunDurationGroup) {
+    speedrunDurationGroup.classList.toggle('hidden', mode !== 'speedrun');
+  }
+
   // Disabilita Difficoltà e Continente se in modalità Personalizzata
   const diffGroup = document.querySelector('[data-choice-group="difficulty"]')?.closest('.setting-group');
   const contGroup = document.querySelector('[data-choice-group="continent"]')?.closest('.setting-group');
@@ -350,16 +366,29 @@ function setActiveContinent(continent) {
   });
 }
 
+function setActiveDuration(durationSeconds) {
+  const value = parseInt(durationSeconds, 10);
+  if (!Number.isFinite(value) || value <= 0) return;
+  speedrunDuration = value;
+  document.querySelectorAll('[data-duration]').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.duration, 10) === value);
+  });
+}
+
+function setStatus(text, isSuccess = false) {
+  if (!statusLabel) return;
+  statusLabel.textContent = text;
+  statusLabel.classList.toggle('success', isSuccess);
+}
+
 /* ==========================================================================
    4. GAME LOGIC & TIMER
    ========================================================================== */
-function startNewGame() {
-  if (!countries.length) return;
-
-  stopSpeedrunTimer();
-  previewState = null;
-  if (pathReviewBar) pathReviewBar.classList.add('hidden');
-
+// Sceglie una coppia partenza/arrivo in base alla modalità e alle opzioni
+// correnti. Ritorna { start, target } oppure null (impostando un messaggio
+// di stato) se la selezione non è possibile, ad es. in modalità Personalizzata
+// con input non validi.
+function pickGamePair() {
   let start = null;
   let target = null;
 
@@ -377,19 +406,19 @@ function startNewGame() {
     const customTarget = findCountryByName(customTargetInput?.value);
 
     if (!customStart || !customTarget) {
-      statusLabel.textContent = 'Seleziona due stati validi per la partita personalizzata.';
-      return;
+      setStatus('Seleziona due stati validi per la partita personalizzata.');
+      return null;
     }
 
     if (customStart.code === customTarget.code) {
-      statusLabel.textContent = 'Partenza e destinazione non possono coincidere.';
-      return;
+      setStatus('Partenza e destinazione non possono coincidere.');
+      return null;
     }
 
     const distMap = computeReachableWithDistance(customStart);
     if (!distMap.has(customTarget.code)) {
-      statusLabel.textContent = `${customTarget.name} non è raggiungibile da ${customStart.name}.`;
-      return;
+      setStatus(`${customTarget.name} non è raggiungibile da ${customStart.name}.`);
+      return null;
     }
 
     start = customStart;
@@ -450,6 +479,27 @@ function startNewGame() {
     target = countries[1] || countries[0];
   }
 
+  return { start, target };
+}
+
+// Avvia una nuova partita. Con isSpeedrunAdvance=true viene invocata
+// internamente per passare alla sfida successiva di uno Speedrun già avviato:
+// in quel caso NON si tocca il timer, NON si apre nessun overlay/banner e il
+// conteggio delle sfide non viene azzerato.
+function startNewGame({ isSpeedrunAdvance = false } = {}) {
+  if (!countries.length) return;
+
+  if (!isSpeedrunAdvance) {
+    stopSpeedrunTimer();
+    speedrunChallenges = 0;
+    previewState = null;
+    if (pathReviewBar) pathReviewBar.classList.add('hidden');
+  }
+
+  const pair = pickGamePair();
+  if (!pair) return;
+  const { start, target } = pair;
+
   game = {
     start,
     current: start,
@@ -472,13 +522,13 @@ function startNewGame() {
   }
 
   if (selectedGameMode === 'speedrun') {
-    startSpeedrunTimer();
+    if (!isSpeedrunAdvance) startSpeedrunTimer();
   } else if (timerDisplay) {
     timerDisplay.classList.add('hidden');
   }
 
   updateLabels();
-  statusLabel.textContent = '';
+  if (!isSpeedrunAdvance) setStatus('');
   renderTexture();
   hideVictoryOverlay();
 }
@@ -489,24 +539,24 @@ function submitMove() {
 
   const next = findCountryByName(text);
   if (!next) {
-    statusLabel.textContent = 'Stato non riconosciuto.';
+    setStatus('Stato non riconosciuto.');
     return;
   }
 
   if (next.code === game.current.code) {
-    statusLabel.textContent = 'Sei già in questo stato.';
+    setStatus('Sei già in questo stato.');
     return;
   }
 
   if (!game.current.borders.includes(next.code)) {
-    statusLabel.textContent = `${next.name} non è confinante.`;
+    setStatus(`${next.name} non è confinante.`);
     return;
   }
 
   const path = game.path || [];
   const prevCode = path.length >= 2 ? path[path.length - 2] : null;
   if (game.visited.has(next.code) && next.code !== prevCode) {
-    statusLabel.textContent = 'Hai già attraversato questo stato.';
+    setStatus('Hai già attraversato questo stato.');
     return;
   }
 
@@ -525,11 +575,24 @@ function submitMove() {
   countryInput.value = '';
 
   if (game.current.code === game.target.code) {
-    stopSpeedrunTimer();
-    statusLabel.textContent = 'Obiettivo raggiunto!';
-    openGameOverlay('victory');
+    if (selectedGameMode === 'speedrun') {
+      // In Speedrun non si apre nessun banner/overlay tra una sfida e la
+      // successiva: solo un breve messaggio, poi riparte subito un'altra
+      // sfida, finché non scade il timer.
+      speedrunChallenges++;
+      setStatus(`Sfida ${speedrunChallenges} completata! Via alla prossima…`, true);
+      setTimeout(() => {
+        if (selectedGameMode === 'speedrun' && speedrunTimer) {
+          startNewGame({ isSpeedrunAdvance: true });
+        }
+      }, 700);
+    } else {
+      stopSpeedrunTimer();
+      setStatus('Obiettivo raggiunto!', true);
+      openGameOverlay('victory');
+    }
   } else {
-    statusLabel.textContent = '';
+    setStatus('');
   }
 }
 
@@ -543,28 +606,32 @@ function doUndo() {
   renderTexture();
 }
 
+function formatTimerText(totalSeconds) {
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  const minsStr = mins < 10 ? '0' + mins : String(mins);
+  const secsStr = secs < 10 ? '0' + secs : String(secs);
+  return `⏱ ${minsStr}:${secsStr}`;
+}
+
 function startSpeedrunTimer() {
   stopSpeedrunTimer();
-  speedrunTimeLeft = 60;
+  speedrunTimeLeft = speedrunDuration;
   if (timerDisplay) {
     timerDisplay.classList.remove('hidden', 'warning');
-    timerDisplay.textContent = '⏱ 01:00';
+    timerDisplay.textContent = formatTimerText(speedrunTimeLeft);
   }
 
   speedrunTimer = setInterval(() => {
     speedrunTimeLeft--;
     if (timerDisplay) {
-      const secs = speedrunTimeLeft % 60;
-      const secsStr = secs < 10 ? '0' + secs : secs;
-      timerDisplay.textContent = `⏱ 00:${secsStr}`;
-
+      timerDisplay.textContent = formatTimerText(Math.max(0, speedrunTimeLeft));
       if (speedrunTimeLeft <= 10) timerDisplay.classList.add('warning');
     }
 
     if (speedrunTimeLeft <= 0) {
       stopSpeedrunTimer();
-      statusLabel.textContent = 'Tempo scaduto!';
-      openGameOverlay('defeat');
+      openGameOverlay('speedrun-summary');
     }
   }, 1000);
 }
@@ -576,12 +643,24 @@ function stopSpeedrunTimer() {
   }
 }
 
+function fillPathList(listEl, codes) {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  (codes || []).forEach(code => {
+    const c = iso3Map.get(code);
+    const li = document.createElement('li');
+    li.textContent = c ? c.name : code;
+    listEl.appendChild(li);
+  });
+}
+
 function openGameOverlay(mode) {
   if (!victoryOverlay) return;
   overlayMode = mode;
 
   if (victoryStats) victoryStats.classList.add('hidden');
   if (victoryReviewActions) victoryReviewActions.classList.add('hidden');
+  if (pathComparison) pathComparison.classList.add('hidden');
 
   if (mode === 'victory') {
     const startName = game?.start?.name || 'Partenza';
@@ -607,12 +686,26 @@ function openGameOverlay(mode) {
           reviewShortestPathButton.classList.toggle('hidden', yourSteps <= shortestSteps);
         }
       }
+
+      // Confronto passo-passo: la tua lista di stati accanto a quella del
+      // percorso più breve, così ogni tappa è messa a paragone senza dover
+      // per forza aprire l'anteprima sul globo.
+      if (pathComparison && game.path && game.shortestPath) {
+        fillPathList(yourPathList, game.path);
+        fillPathList(shortestPathList, game.shortestPath);
+        pathComparison.classList.remove('hidden');
+      }
     }
-  } else if (mode === 'defeat') {
-    if (victoryBadge) victoryBadge.textContent = '⏱️';
-    if (victoryTitle) victoryTitle.textContent = 'Tempo Scaduto!';
-    if (victoryMessage) victoryMessage.textContent = 'Non sei riuscito a raggiungere la destinazione in tempo. Riprova!';
-    if (playAgainButton) playAgainButton.textContent = 'Riprova';
+  } else if (mode === 'speedrun-summary') {
+    const durationLabel = formatTimerText(speedrunDuration).replace('⏱ ', '');
+    if (victoryBadge) victoryBadge.textContent = '🏁';
+    if (victoryTitle) victoryTitle.textContent = 'Tempo scaduto!';
+    if (victoryMessage) {
+      victoryMessage.textContent = speedrunChallenges > 0
+        ? `Hai completato ${speedrunChallenges} sfid${speedrunChallenges === 1 ? 'a' : 'e'} in ${durationLabel}. Vuoi riprovare?`
+        : `Tempo scaduto senza completare nessuna sfida in ${durationLabel}. Vuoi riprovare?`;
+    }
+    if (playAgainButton) playAgainButton.textContent = 'Rigioca';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
   } else {
     if (victoryBadge) victoryBadge.textContent = '🌍';
@@ -1152,6 +1245,21 @@ function onCanvasHover(event) {
 
 function getColoredCountries() {
   if (!game) return [];
+
+  // Durante l'anteprima di un percorso (il tuo o quello più breve) i paesi
+  // "attivi" sono quelli evidenziati nella preview, non necessariamente
+  // quelli del tuo percorso: altrimenti passando il mouse sui paesi del
+  // percorso più breve che non hai attraversato tu, il nome non compariva.
+  if (previewState && Array.isArray(previewState.codes)) {
+    const codes = new Set(previewState.codes);
+    const list = [];
+    codes.forEach(code => {
+      const c = iso3Map.get(code);
+      if (c && c.feature) list.push(c);
+    });
+    return list;
+  }
+
   const codes = new Set(game.path || []);
   if (game.target) codes.add(game.target.code);
   const list = [];
@@ -1193,10 +1301,12 @@ function geoDrawPathPreview(preview) {
   const toColor = preview.mode === 'shortest' ? [124, 58, 237, 0.95] : [0, 200, 83, 0.98];
   const lineColor = preview.mode === 'shortest' ? 'rgba(56, 189, 248, 0.85)' : 'rgba(0, 200, 83, 0.85)';
 
-  // Tutti gli altri paesi: sfondo neutro, appena visibile
+  // Tutti gli altri paesi: sfondo neutro, ma con i confini ben visibili
+  // (prima qui i bordi non venivano disegnati e la mappa sembrava quella
+  // della modalità Hardcore: ora si vede sempre la geografia completa).
   for (const country of renderCountries) {
     if (!country.feature || codeSet.has(country.code)) continue;
-    drawGeoFeature(country.feature, '#1b2433', false);
+    drawGeoFeature(country.feature, '#1b2433', true);
   }
 
   // Paesi del percorso, con gradiente in base all'ordine di attraversamento
@@ -1238,36 +1348,14 @@ function geoDrawPathPreview(preview) {
   }
   textureContext.restore();
 
-  // Marcatori numerati di partenza/arrivo
+  // Segnalini di partenza/arrivo: un pin elegante invece del vecchio
+  // cerchio con il numero dentro.
   if (codes.length) {
-    drawPathStepMarker(codes[0], 1, 'rgba(0, 200, 83, 0.98)');
+    drawLocationPinAtCountry(codes[0], COLOR_CURRENT, { radius: 15 });
     if (codes.length > 1) {
-      drawPathStepMarker(codes[codes.length - 1], codes.length, 'rgba(220, 20, 60, 0.98)');
+      drawLocationPinAtCountry(codes[codes.length - 1], COLOR_TARGET, { radius: 15 });
     }
   }
-}
-
-function drawPathStepMarker(code, stepNumber, color) {
-  const country = iso3Map.get(code);
-  if (!country || !country.feature) return;
-  const c = computeFeatureCentroid(country.feature);
-  const [cx, cy] = projectPoint([c.lon, c.lat]);
-
-  textureContext.save();
-  textureContext.beginPath();
-  textureContext.arc(cx, cy, 26, 0, Math.PI * 2);
-  textureContext.fillStyle = color;
-  textureContext.fill();
-  textureContext.lineWidth = 3;
-  textureContext.strokeStyle = 'rgba(255,255,255,0.95)';
-  textureContext.stroke();
-
-  textureContext.fillStyle = '#fff';
-  textureContext.font = 'bold 26px sans-serif';
-  textureContext.textAlign = 'center';
-  textureContext.textBaseline = 'middle';
-  textureContext.fillText(String(stepNumber), cx, cy + 1);
-  textureContext.restore();
 }
 
 function geoDrawAllCountries() {
@@ -1302,9 +1390,10 @@ function geoDrawAllCountries() {
     const isVisited = pathIndex.has(country.code);
     const isNeighbor = !isCurrent && !isTarget && !isVisited && neighborCodes.has(country.code);
 
-    if (selectedGameMode === 'fog' && !isCurrent && !isTarget && !isVisited) {
-      continue;
-    }
+    // La Nebbia nasconde solo i "vicini evidenziati" e i collegamenti tra
+    // isole (vedi drawIslandConnections): le sagome dei paesi restano
+    // sempre visibili, esattamente come in Hardcore, così la modalità
+    // resta più clemente di Hardcore invece di essere ancora più punitiva.
 
     let fillStyle = '#2d3748';
     let drawBorder = selectedGameMode !== 'hardcore' && selectedGameMode !== 'fog';
@@ -1433,12 +1522,21 @@ function drawRing(points, lonOffset = 0) {
 
 function drawIslandConnections() {
   if (!islandConnections.length) return;
+
+  // In modalità Nebbia i collegamenti tratteggiati tra isole rivelerebbero
+  // troppa geografia nascosta: li mostriamo quindi solo quando uno dei due
+  // paesi collegati è quello su cui ci troviamo in quel momento.
+  const restrictToCurrent = selectedGameMode === 'fog';
+  const currentCode = game?.current?.code;
+  if (restrictToCurrent && !currentCode) return;
+
   textureContext.save();
   textureContext.setLineDash([6, 7]);
   textureContext.lineWidth = 1.8;
   textureContext.strokeStyle = 'rgba(255,255,255,0.45)';
   
   islandConnections.forEach(({ a, b }) => {
+    if (restrictToCurrent && a !== currentCode && b !== currentCode) return;
     const ca = iso3Map.get(a);
     const cb = iso3Map.get(b);
     if (!ca?.feature || !cb?.feature) return;
@@ -1481,23 +1579,68 @@ function drawMicroMarkerIfNeeded(code, color) {
   const pixelThreshold = 12;
   const isMicro = MICROSTATE_ISO3.has(code);
   if (isMicro || Math.max(w, h) <= pixelThreshold) {
-    const c = computeFeatureCentroid(country.feature);
-    const [cx, cy] = projectPoint([c.lon, c.lat]);
-
-    textureContext.beginPath();
-    textureContext.arc(cx, cy, 34, 0, Math.PI * 2);
-    textureContext.fillStyle = color.replace(/,[\d.]+\)$/, ',0.28)');
-    textureContext.fill();
-
-    textureContext.beginPath();
-    const r = 20;
-    textureContext.arc(cx, cy, r, 0, Math.PI * 2);
-    textureContext.fillStyle = color;
-    textureContext.fill();
-    textureContext.lineWidth = 3;
-    textureContext.strokeStyle = 'rgba(255,255,255,0.98)';
-    textureContext.stroke();
+    drawLocationPinAtCountry(code, color, { radius: 17 });
   }
+}
+
+// Segnalino a forma di "pin" (goccia), stile mappa: molto più leggibile di
+// un semplice pallino colorato e permette di individuare con precisione
+// stati troppo piccoli per avere confini disegnabili (Monaco, San Marino,
+// Vaticano, Liechtenstein, Andorra, Malta...). La punta del pin indica
+// esattamente il punto del globo a cui lo stato corrisponde.
+function drawLocationPinAtCountry(code, color, options) {
+  const country = iso3Map.get(code);
+  if (!country || !country.feature) return;
+  const c = computeFeatureCentroid(country.feature);
+  const [cx, cy] = projectPoint([c.lon, c.lat]);
+  drawLocationPin(cx, cy, color, options);
+}
+
+function drawLocationPin(tipX, tipY, color, { radius = 16 } = {}) {
+  const delta = (34 * Math.PI) / 180; // apertura della "coda" del pin
+  const legLength = radius * 2.1;
+  const headCenterY = tipY - legLength;
+  const leftAngle = Math.PI / 2 + delta;
+  const rightAngle = Math.PI / 2 - delta;
+  const leftX = tipX - radius * Math.sin(delta);
+  const leftY = headCenterY + radius * Math.cos(delta);
+
+  textureContext.save();
+
+  // piccola ombra ellittica a terra, per dare l'idea che il pin "punti"
+  // con precisione al punto esatto sulla mappa
+  textureContext.beginPath();
+  textureContext.ellipse(tipX, tipY + 3, radius * 0.55, radius * 0.2, 0, 0, Math.PI * 2);
+  textureContext.fillStyle = 'rgba(0,0,0,0.4)';
+  textureContext.fill();
+
+  // corpo del pin: testa rotonda che si restringe in una punta
+  textureContext.beginPath();
+  textureContext.moveTo(tipX, tipY);
+  textureContext.lineTo(leftX, leftY);
+  textureContext.arc(tipX, headCenterY, radius, leftAngle, rightAngle, false);
+  textureContext.closePath();
+
+  textureContext.shadowColor = 'rgba(0,0,0,0.55)';
+  textureContext.shadowBlur = 5;
+  textureContext.shadowOffsetY = 2;
+  textureContext.fillStyle = color;
+  textureContext.fill();
+  textureContext.shadowColor = 'transparent';
+  textureContext.shadowBlur = 0;
+  textureContext.shadowOffsetY = 0;
+
+  textureContext.lineWidth = 2.4;
+  textureContext.strokeStyle = 'rgba(255,255,255,0.95)';
+  textureContext.stroke();
+
+  // foro interno bianco, tipico dei marcatori di mappa
+  textureContext.beginPath();
+  textureContext.arc(tipX, headCenterY, radius * 0.4, 0, Math.PI * 2);
+  textureContext.fillStyle = 'rgba(255,255,255,0.95)';
+  textureContext.fill();
+
+  textureContext.restore();
 }
 
 /* ==========================================================================
