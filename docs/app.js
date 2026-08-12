@@ -61,6 +61,9 @@ let nameMap = new Map();
 let nameMapCompact = new Map();
 let featureByIso = new Map();
 let game = null;
+let gameType = 'route';        // 'route' (Collega i Paesi) | 'guess' (Guess the Country)
+let guessGame = null;          // stato dedicato alla modalità Guess the Country
+let hintHighlightCode = null;  // paese evidenziato temporaneamente da un indizio (solo route)
 let isDragging = false;
 let showSuggestions = false;
 let overlayMode = 'setup';
@@ -106,24 +109,65 @@ function initialize([topology, countryData]) {
   document.title = 'GeoRoute';
   animate();
 
-  // Mostra sempre il tutorial all'avvio
-  const tutorialOverlay = document.getElementById('tutorialOverlay');
-  const tutorialCloseBtn = document.getElementById('tutorialCloseBtn');
-  if (tutorialOverlay && tutorialCloseBtn) {
-    tutorialOverlay.classList.remove('hidden');
-    tutorialCloseBtn.addEventListener('click', () => {
-      tutorialOverlay.classList.add('hidden');
-      startGame();
-    }, { once: true });
+  // Schermata iniziale: scelta tra i due giochi
+  const gameSelectOverlay = document.getElementById('gameSelectOverlay');
+  if (gameSelectOverlay) {
+    gameSelectOverlay.querySelectorAll('[data-gametype]').forEach(btn => {
+      btn.addEventListener('click', () => chooseGame(btn.dataset.gametype));
+    });
+    gameSelectOverlay.classList.remove('hidden');
   } else {
-    startGame();
+    chooseGame('route');
+  }
+}
+
+// Selezione del gioco → adatta le impostazioni e mostra il tutorial dedicato
+function chooseGame(type) {
+  gameType = (type === 'guess') ? 'guess' : 'route';
+  applyGameTypeToSettings();
+  const sel = document.getElementById('gameSelectOverlay');
+  if (sel) sel.classList.add('hidden');
+  showTutorialFor(gameType);
+}
+
+function showTutorialFor(type) {
+  const overlay = document.getElementById('tutorialOverlay');
+  const titleEl = document.getElementById('tutorialTitle');
+  const msgEl = document.getElementById('tutorialMessage');
+  const closeBtn = document.getElementById('tutorialCloseBtn');
+  if (!overlay || !closeBtn) { beginGame(); return; }
+
+  if (titleEl) {
+    titleEl.innerHTML = type === 'guess' ? '🎯 Guess the Country' : '🌍 Collega i Paesi';
+  }
+  if (msgEl) {
+    msgEl.innerHTML = type === 'guess'
+      ? 'Un paese si illumina di <span style="color:#dc143c;font-weight:bold;">rosso</span>: scrivi il suo nome per indovinarlo.<br />' +
+        'Se ci prendi diventa <span style="color:#00c853;font-weight:bold;">verde</span>.<br />' +
+        'Ogni paese che sbagli si colora comunque di verde, così vedi dov\'è.<br />' +
+        'Hai <strong>3 tentativi</strong> e <strong>2 indizi</strong>!'
+      : 'Parti dal <span style="color:#00c853;font-weight:bold;">pallino verde</span> e raggiungi il ' +
+        '<span style="color:#dc143c;font-weight:bold;">pallino rosso</span>.<br />' +
+        '<strong>Digita il nome di uno stato confinante</strong> per avanzare.<br />' +
+        'Ogni paese visitato viene tracciato nella barra laterale.<br />' +
+        'Trova il percorso più breve!';
   }
 
-  function startGame() {
-    startNewGame();
-    if (countryInput) countryInput.disabled = false;
-    if (submitButton) submitButton.disabled = false;
-  }
+  overlay.classList.remove('hidden');
+
+  // Ricreo il bottone per evitare listener accumulati tra un tutorial e l'altro
+  const freshBtn = closeBtn.cloneNode(true);
+  closeBtn.parentNode.replaceChild(freshBtn, closeBtn);
+  freshBtn.addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    beginGame();
+  }, { once: true });
+}
+
+function beginGame() {
+  if (countryInput) countryInput.disabled = false;
+  if (submitButton) submitButton.disabled = false;
+  startNewGame();
 }
 
 function setupControls() {
@@ -167,8 +211,21 @@ function setupControls() {
     });
   }
 
+  const changeGameButton = document.getElementById('changeGameButton');
+  if (changeGameButton) {
+    changeGameButton.addEventListener('click', () => {
+      if (settingsMenu) settingsMenu.classList.add('hidden');
+      hideVictoryOverlay();
+      const sel = document.getElementById('gameSelectOverlay');
+      if (sel) sel.classList.remove('hidden');
+    });
+  }
+
   if (menuButton && settingsMenu) {
-    menuButton.addEventListener('click', () => settingsMenu.classList.toggle('hidden'));
+    menuButton.addEventListener('click', () => {
+      applyGameTypeToSettings();
+      settingsMenu.classList.toggle('hidden');
+    });
     if (closeSettingsButton && settingsMenu) {
       closeSettingsButton.addEventListener('click', () => {
         settingsMenu.classList.add('hidden');
@@ -221,14 +278,13 @@ function setupControls() {
   if (targetBox) targetBox.addEventListener('click', () => { if (game && game.target) centerOnCountryKeepView(game.target); });
 
   window.addEventListener('keydown', (e) => {
-    if (!game) return;
     const key = e.key;
 
     const undo = (e.ctrlKey || e.metaKey) && key.toLowerCase() === 'z';
     const altLeft = e.altKey && key === 'ArrowLeft';
 
     if (undo || altLeft) {
-      if (selectedGameMode !== 'hardcore') {
+      if (gameType === 'route' && game && selectedGameMode !== 'hardcore') {
         doUndo();
       }
       return;
@@ -346,6 +402,35 @@ function setStatus(text, isSuccess = false) {
   statusLabel.classList.toggle('success', isSuccess);
 }
 
+function activeDiff() {
+  return (document.querySelector('[data-choice-group="difficulty"] .active') || {}).dataset?.diff || 'medium';
+}
+function activeCont() {
+  return (document.querySelector('[data-choice-group="continent"] .active') || {}).dataset?.cont || 'all';
+}
+function regionLabel(r) {
+  const m = { Europe: 'Europa', Asia: 'Asia', Africa: 'Africa', Americas: 'Americhe', Oceania: 'Oceania', Antarctic: 'Antartide' };
+  return m[r] || r || 'una regione sconosciuta';
+}
+
+// Nasconde/mostra le opzioni non valide per il gioco selezionato (Guess non ha Hardcore né Personalizzata)
+function applyGameTypeToSettings() {
+  const hardcoreBtn = document.querySelector('[data-mode="hardcore"]');
+  const customBtn = document.querySelector('[data-mode="custom"]');
+
+  if (gameType === 'guess') {
+    hardcoreBtn?.classList.add('hidden');
+    customBtn?.classList.add('hidden');
+    if (selectedGameMode === 'hardcore' || selectedGameMode === 'custom') {
+      setActiveMode('standard');
+    }
+    document.getElementById('customGameOptions')?.classList.add('hidden');
+  } else {
+    hardcoreBtn?.classList.remove('hidden');
+    customBtn?.classList.remove('hidden');
+  }
+}
+
 /* ==========================================================================
    4. GAME LOGIC & TIMER
    ========================================================================== */
@@ -436,8 +521,14 @@ function pickGamePair() {
   return { start, target };
 }
 
-function startNewGame({ isSpeedrunAdvance = false } = {}) {
+function startNewGame(opts = {}) {
+  if (gameType === 'guess') { startGuessGame(opts); return; }
+
+  const { isSpeedrunAdvance = false } = opts;
   if (!countries.length) return;
+
+  guessGame = null;
+  hintHighlightCode = null;
 
   if (!isSpeedrunAdvance) {
     stopSpeedrunTimer();
@@ -458,7 +549,8 @@ function startNewGame({ isSpeedrunAdvance = false } = {}) {
     path: [start.code],
     shortestPath: computeShortestPathCodes(start, target),
     errors: 0,               // contatore errori
-    maxErrors: selectedGameMode === 'hardcore' ? 0 : 3   // limite errori
+    maxErrors: selectedGameMode === 'hardcore' ? 0 : 3,  // vite disponibili
+    hintsLeft: (selectedGameMode === 'standard' || selectedGameMode === 'speedrun') ? 2 : 0
   };
 
   if (countryInput) {
@@ -480,6 +572,8 @@ function startNewGame({ isSpeedrunAdvance = false } = {}) {
   }
 
   updateLabels();
+  updateErrorsIndicator();
+  updateHintUI();
   if (!isSpeedrunAdvance) setStatus('🏁 Inserisci il nome di un paese confinante per raggiungere la meta!');
   renderTexture();
   hideVictoryOverlay();
@@ -550,20 +644,309 @@ function submitMove() {
   }
 }
 
-// Funzione per gestire gli errori
+// Funzione per gestire gli errori (modello a "vite")
 function handleError(message) {
   if (!game) return;
   game.errors++;
-  setStatus(message);
+  updateErrorsIndicator();
 
-  // Verifica se ha superato il limite
-  if (game.errors > game.maxErrors) {
+  const remaining = game.maxErrors - game.errors;
+
+  if (game.maxErrors === 0 || remaining < 0) {
     setStatus('Hai esaurito gli errori! Partita terminata.');
     openGameOverlay('defeat');
+    return;
+  }
+
+  if (remaining === 0) {
+    setStatus(`${message} (ultimo errore rimasto!)`);
   } else {
-    // Mostra quanti errori rimangono
-    const remaining = game.maxErrors - game.errors + 1;
-    setStatus(`${message} (${remaining} errore${remaining === 1 ? '' : 'i'} rimasto${remaining === 1 ? '' : 'i'})`);
+    setStatus(`${message} (${remaining} error${remaining === 1 ? 'e' : 'i'} riman${remaining === 1 ? 'e' : 'gono'})`);
+  }
+}
+
+/* ==========================================================================
+   4ter. INDICATORE ERRORI, INDIZI & GUESS THE COUNTRY
+   ========================================================================== */
+function updateErrorsIndicator() {
+  const el = document.getElementById('errorsIndicator');
+  if (!el) return;
+  const g = gameType === 'guess' ? guessGame : game;
+  if (!g) { el.classList.add('hidden'); return; }
+
+  el.classList.remove('hidden');
+  const max = g.maxErrors || 0;
+
+  if (max === 0) {
+    el.textContent = '☠';
+    el.title = 'Hardcore: nessun errore consentito';
+    return;
+  }
+
+  const remaining = Math.max(0, max - (g.errors || 0));
+  el.innerHTML = '';
+  for (let i = 0; i < max; i++) {
+    const heart = document.createElement('span');
+    heart.className = 'err-heart' + (i < remaining ? '' : ' lost');
+    heart.textContent = i < remaining ? '❤' : '🖤';
+    el.appendChild(heart);
+  }
+  el.title = `${remaining} error${remaining === 1 ? 'e' : 'i'} riman${remaining === 1 ? 'e' : 'gono'}`;
+}
+
+function updateHintUI() {
+  const btn = document.getElementById('hintButton');
+  if (!btn) return;
+  const g = gameType === 'guess' ? guessGame : game;
+  const allowed = (selectedGameMode === 'standard' || selectedGameMode === 'speedrun');
+  const left = g ? (g.hintsLeft || 0) : 0;
+
+  btn.classList.toggle('hidden', !allowed || !g);
+  const cnt = document.getElementById('hintCount');
+  if (cnt) cnt.textContent = String(left);
+  btn.disabled = left <= 0;
+}
+
+function computeNextHopToward(from, to) {
+  if (!from || !to) return null;
+  const path = computeShortestPathCodes(from, to);
+  if (!path || path.length < 2) return null;
+  return iso3Map.get(path[1]);
+}
+
+function useHint() {
+  const g = gameType === 'guess' ? guessGame : game;
+  if (!g || (g.hintsLeft || 0) <= 0) return;
+
+  if (gameType === 'guess') {
+    const usedIdx = 2 - g.hintsLeft; // 0 = primo indizio, 1 = secondo
+    const target = g.target;
+    if (usedIdx === 0) {
+      setStatus(`💡 Indizio: il paese si trova in ${regionLabel(target.region)}.`, true);
+    } else {
+      const name = target.name || '';
+      const letters = name.replace(/[^A-Za-zÀ-ÿ]/g, '').length;
+      setStatus(`💡 Indizio: inizia per "${(name[0] || '').toUpperCase()}" e ha ${letters} lettere.`, true);
+    }
+    g.hintsLeft--;
+  } else {
+    const next = computeNextHopToward(game.current, game.target);
+    if (!next) { setStatus('Nessun indizio disponibile da qui.'); return; }
+    g.hintsLeft--;
+    setStatus(`💡 Indizio: prova con ${next.name}.`, true);
+    hintHighlightCode = next.code;
+    renderTexture();
+    setTimeout(() => {
+      if (hintHighlightCode === next.code) { hintHighlightCode = null; renderTexture(); }
+    }, 3000);
+  }
+  updateHintUI();
+}
+
+function handleSubmit() {
+  if (gameType === 'guess') submitGuess();
+  else submitMove();
+}
+
+/* --- GUESS THE COUNTRY --- */
+function pickGuessTarget() {
+  const diff = activeDiff();
+  const continent = activeCont();
+
+  let pool = renderCountries.filter(c => c && c.name && c.feature);
+  if (continent && continent !== 'all') {
+    const filtered = pool.filter(c => c.region === continent);
+    if (filtered.length) pool = filtered;
+  }
+  if (!pool.length) pool = renderCountries.slice();
+
+  // Difficoltà per notorietà (proxy: popolazione), suddivisa in terzili
+  const withPop = pool.filter(c => typeof c.population === 'number' && c.population > 0);
+  if (withPop.length >= 6) {
+    const sorted = withPop.slice().sort((a, b) => b.population - a.population);
+    const third = Math.max(1, Math.floor(sorted.length / 3));
+    let bucket = sorted;
+    if (diff === 'easy') bucket = sorted.slice(0, third);
+    else if (diff === 'hard') bucket = sorted.slice(-third);
+    else {
+      const mid = sorted.slice(third, sorted.length - third);
+      bucket = mid.length ? mid : sorted;
+    }
+    if (bucket.length) pool = bucket;
+  }
+
+  return pool[Math.floor(Math.random() * pool.length)] || renderCountries[0];
+}
+
+function startGuessGame(opts = {}) {
+  const { isSpeedrunAdvance = false } = opts;
+  if (!renderCountries.length) return;
+
+  game = null;
+  hintHighlightCode = null;
+  previewState = null;
+
+  if (!isSpeedrunAdvance) {
+    stopSpeedrunTimer();
+    speedrunChallenges = 0;
+    if (pathReviewBar) pathReviewBar.classList.add('hidden');
+  }
+
+  const target = pickGuessTarget();
+  if (!target) return;
+
+  guessGame = {
+    target,
+    found: false,
+    greenCodes: new Set(),
+    errors: 0,
+    maxErrors: 3,
+    hintsLeft: (selectedGameMode === 'standard' || selectedGameMode === 'speedrun') ? 2 : 0
+  };
+
+  if (countryInput) {
+    countryInput.disabled = false;
+    countryInput.value = '';
+    countryInput.focus();
+  }
+  if (submitButton) submitButton.disabled = false;
+
+  if (target.feature) {
+    const c = computeFeatureCentroid(target.feature);
+    centerLonLatWithEquator(c.lon, c.lat);
+  }
+
+  if (selectedGameMode === 'speedrun') {
+    if (!isSpeedrunAdvance) startSpeedrunTimer();
+  } else if (timerDisplay) {
+    timerDisplay.classList.add('hidden');
+  }
+
+  updateGuessLabels();
+  updateErrorsIndicator();
+  updateHintUI();
+  if (!isSpeedrunAdvance) setStatus('🔴 Indovina il paese evidenziato in rosso!');
+  renderTexture();
+  hideVictoryOverlay();
+}
+
+function submitGuess() {
+  const text = (countryInput.value || '').trim();
+  if (!text || !guessGame || guessGame.found) return;
+
+  const guess = findCountryByName(text);
+  if (!guess) { handleGuessError('Stato non riconosciuto.'); return; }
+
+  if (guess.code === guessGame.target.code) {
+    guessGame.found = true;
+    guessGame.greenCodes.add(guess.code);
+    countryInput.value = '';
+    updateGuessLabels();
+    renderTexture();
+    centerOnCountry(guessGame.target);
+
+    if (selectedGameMode === 'speedrun') {
+      speedrunChallenges++;
+      setStatus(`✅ ${guess.name}! Sfida ${speedrunChallenges} completata!`, true);
+      setTimeout(() => {
+        if (selectedGameMode === 'speedrun' && speedrunTimer) {
+          startGuessGame({ isSpeedrunAdvance: true });
+        }
+      }, 800);
+    } else {
+      stopSpeedrunTimer();
+      setStatus('Indovinato!', true);
+      openGameOverlay('guess-victory');
+    }
+    return;
+  }
+
+  // Guess errato
+  if (guessGame.greenCodes.has(guess.code)) {
+    setStatus('Hai già nominato questo stato.');
+    countryInput.value = '';
+    return;
+  }
+  guessGame.greenCodes.add(guess.code);
+  countryInput.value = '';
+  updateGuessLabels();
+  renderTexture();
+  centerOnCountry(guess);
+  handleGuessError(`${guess.name} non è il paese cercato.`);
+}
+
+function handleGuessError(message) {
+  if (!guessGame) return;
+  guessGame.errors++;
+  updateErrorsIndicator();
+
+  const remaining = guessGame.maxErrors - guessGame.errors;
+  if (remaining < 0) {
+    setStatus(`Tentativi esauriti! Il paese era ${guessGame.target.name}.`);
+    stopSpeedrunTimer();
+    openGameOverlay('guess-defeat');
+    return;
+  }
+
+  if (remaining === 0) {
+    setStatus(`${message} (ultimo tentativo!)`);
+  } else {
+    setStatus(`${message} (${remaining} tentativ${remaining === 1 ? 'o' : 'i'} riman${remaining === 1 ? 'e' : 'gono'})`);
+  }
+}
+
+function updateGuessLabels() {
+  if (!guessGame) return;
+
+  if (currentBox) {
+    currentBox.textContent = '🔴';
+    currentBox.style.background = COLOR_TARGET;
+  }
+  if (targetBox) {
+    targetBox.textContent = guessGame.found ? guessGame.target.name : '?';
+    targetBox.style.background = guessGame.found ? COLOR_CURRENT : 'rgba(15,23,42,0.85)';
+  }
+
+  const sidebar = document.getElementById('timelineSidebar');
+  if (sidebar) {
+    sidebar.classList.remove('hidden');
+    sidebar.innerHTML = '';
+    Array.from(guessGame.greenCodes).forEach(code => {
+      const c = iso3Map.get(code);
+      const item = document.createElement('div');
+      item.className = 'timeline-item';
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      dot.style.background = code === guessGame.target.code ? COLOR_CURRENT : 'rgba(72,187,120,0.9)';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = c ? c.name : code;
+      item.appendChild(dot);
+      item.appendChild(label);
+      item.addEventListener('click', () => { if (c && c.feature) centerOnCountry(c); });
+      sidebar.appendChild(item);
+    });
+  }
+
+  updateAutocompleteSuggestions();
+}
+
+function geoDrawGuessCountries() {
+  if (!guessGame) return;
+  const targetCode = guessGame.target.code;
+
+  for (const country of renderCountries) {
+    const feature = country.feature;
+    if (!feature) continue;
+
+    let fillStyle = '#2d3748';
+    if (guessGame.greenCodes.has(country.code)) {
+      fillStyle = COLOR_CURRENT;
+    } else if (country.code === targetCode) {
+      fillStyle = guessGame.found ? COLOR_CURRENT : COLOR_TARGET;
+    }
+
+    drawGeoFeature(feature, fillStyle, true, false);
   }
 }
 
@@ -679,12 +1062,25 @@ function openGameOverlay(mode) {
   } else if (mode === 'defeat') {
     // Modalità sconfitta
     const modeName = selectedGameMode === 'hardcore' ? 'Hardcore' : selectedGameMode === 'speedrun' ? 'Speedrun' : 'Standard';
-    const maxErrors = game?.maxErrors || 0;
     if (victoryBadge) victoryBadge.textContent = '💥';
     if (victoryTitle) victoryTitle.textContent = 'Hai perso!';
     if (victoryMessage) {
-      victoryMessage.textContent = `Hai commesso più di ${maxErrors} errori in modalità ${modeName}. Vuoi riprovare?`;
+      victoryMessage.textContent = `Hai esaurito gli errori in modalità ${modeName}. Vuoi riprovare?`;
     }
+    if (playAgainButton) playAgainButton.textContent = 'Riprova';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+  } else if (mode === 'guess-victory') {
+    const t = guessGame?.target?.name || 'il paese';
+    if (victoryBadge) victoryBadge.textContent = '🎯';
+    if (victoryTitle) victoryTitle.textContent = 'Indovinato!';
+    if (victoryMessage) victoryMessage.textContent = `Hai riconosciuto ${t}. Vuoi un'altra sfida?`;
+    if (playAgainButton) playAgainButton.textContent = 'Gioca ancora';
+    if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
+  } else if (mode === 'guess-defeat') {
+    const t = guessGame?.target?.name || '';
+    if (victoryBadge) victoryBadge.textContent = '💥';
+    if (victoryTitle) victoryTitle.textContent = 'Peccato!';
+    if (victoryMessage) victoryMessage.textContent = `Hai esaurito i tentativi. Il paese era ${t}. Riprovi?`;
     if (playAgainButton) playAgainButton.textContent = 'Riprova';
     if (closeVictoryButton) closeVictoryButton.textContent = 'Chiudi';
   } else {
@@ -846,7 +1242,7 @@ function updateAutocompleteSuggestions() {
   const candidates = [];
   const added = new Set();
 
-  if (game && game.current && Array.isArray(game.current.borders)) {
+  if (gameType !== 'guess' && game && game.current && Array.isArray(game.current.borders)) {
     game.current.borders.forEach(borderCode => {
       const borderCountry = iso3Map.get(borderCode);
       if (borderCountry && !added.has(borderCountry.name)) {
@@ -878,7 +1274,7 @@ function updateAutocompleteSuggestions() {
       e.preventDefault();
       countryInput.value = c.name;
       suggestionsList.classList.add('hidden');
-      submitMove();
+      handleSubmit();
     });
     suggestionsList.appendChild(item);
   });
@@ -968,10 +1364,13 @@ function initThree() {
   canvas.addEventListener('pointerleave', hideTooltip);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
-  submitButton.addEventListener('click', submitMove);
+  submitButton.addEventListener('click', handleSubmit);
   countryInput.addEventListener('keydown', event => {
-    if (event.key === 'Enter') submitMove();
+    if (event.key === 'Enter') handleSubmit();
   });
+
+  const hintButton = document.getElementById('hintButton');
+  if (hintButton) hintButton.addEventListener('click', useHint);
 }
 
 function resize() {
@@ -1169,6 +1568,17 @@ function onWheel(event) {
 
 // Funzione che restituisce i paesi attualmente colorati (percorso, corrente, obiettivo, vicini)
 function getColoredCountries() {
+  if (gameType === 'guess') {
+    if (!guessGame) return [];
+    const list = [];
+    // Mostro il nome solo dei paesi già verdi (il target resta anonimo finché non lo indovini)
+    guessGame.greenCodes.forEach(code => {
+      const c = iso3Map.get(code);
+      if (c && c.feature) list.push(c);
+    });
+    return list;
+  }
+
   if (!game) return [];
 
   if (previewState && Array.isArray(previewState.codes)) {
@@ -1234,6 +1644,9 @@ function renderTexture() {
 
   if (previewState) {
     geoDrawPathPreview(previewState);
+  } else if (gameType === 'guess') {
+    geoDrawGuessCountries();
+    drawIslandConnections();
   } else {
     geoDrawAllCountries();
     drawIslandConnections();
@@ -1323,7 +1736,8 @@ function geoDrawAllCountries() {
     const isCurrent = country.code === currentCode;
     const isTarget = country.code === targetCode;
     const isVisited = pathIndex.has(country.code);
-    const isNeighbor = !isCurrent && !isTarget && !isVisited && neighborCodes.has(country.code);
+    const isHint = !isCurrent && !isTarget && !isVisited && country.code === hintHighlightCode;
+    const isNeighbor = !isCurrent && !isTarget && !isVisited && !isHint && neighborCodes.has(country.code);
 
     if (selectedGameMode === 'hardcore' && !isVisited && !isTarget) {
       continue;
@@ -1344,6 +1758,9 @@ function geoDrawAllCountries() {
       const last = Math.max(1, (game.path.length - 1));
       const t = idx / last;
       fillStyle = lerpColorRGBA([200, 255, 180, 0.98], [0, 200, 83, 0.98], t);
+      drawBorder = true;
+    } else if (isHint) {
+      fillStyle = 'rgba(255, 179, 0, 0.9)';
       drawBorder = true;
     } else if (isNeighbor) {
       fillStyle = 'rgba(56, 189, 248, 0.30)';
@@ -1494,6 +1911,8 @@ function buildCountryMetadata(countryData, geoFeatures) {
       altNames: buildAliases(country),
       numericId,
       region,
+      population: typeof country.population === 'number' ? country.population : null,
+      area: typeof country.area === 'number' ? country.area : null,
       feature: null
     };
     iso3Map.set(iso3, item);

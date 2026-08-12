@@ -28,6 +28,10 @@
       </div>
       
       <div class="header-actions">
+        <div id="errorsIndicator" class="errors-badge hidden" title="Errori rimasti"></div>
+        <button id="hintButton" class="icon-btn hint-btn hidden" title="Usa un indizio">
+          💡<span id="hintCount" class="hint-count">2</span>
+        </button>
         <button id="alignButton" class="icon-btn" title="Riallinea Polo Nord">🧭</button>
         <button id="menuButton" class="icon-btn" title="Impostazioni / Nuova Partita">⚙️</button>
       </div>
@@ -60,11 +64,31 @@
   <!-- Country Tooltip on Hover -->
   <div id="countryTooltip" class="country-tooltip hidden"></div>
 
-  <!-- Tutorial Overlay (appare solo la prima volta) -->
-  <div id="tutorialOverlay" class="modal-overlay">
+  <!-- Schermata iniziale: scelta del gioco -->
+  <div id="gameSelectOverlay" class="modal-overlay game-select-overlay hidden">
+    <div class="game-select-wrap">
+      <h1 class="game-select-heading">🌐 GeoRoute</h1>
+      <p class="game-select-subheading">Scegli come vuoi giocare</p>
+      <div class="game-select-grid">
+        <button class="game-select-card" data-gametype="route">
+          <div class="game-select-emoji">🌍</div>
+          <div class="game-select-title">Collega i Paesi</div>
+          <div class="game-select-desc">Dal pallino verde al rosso passando per gli stati confinanti.</div>
+        </button>
+        <button class="game-select-card" data-gametype="guess">
+          <div class="game-select-emoji">🎯</div>
+          <div class="game-select-title">Guess the Country</div>
+          <div class="game-select-desc">Indovina il paese evidenziato in rosso sul mappamondo.</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tutorial Overlay (adattato al gioco scelto) -->
+  <div id="tutorialOverlay" class="modal-overlay hidden">
     <div class="modal-card text-center">
-      <h2 class="modal-title">🌍 GeoRoute</h2>
-      <p class="modal-message" style="margin-bottom: 16px;">
+      <h2 id="tutorialTitle" class="modal-title">🌍 Collega i Paesi</h2>
+      <p id="tutorialMessage" class="modal-message" style="margin-bottom: 16px;">
         Parti dal <span style="color:#00c853;font-weight:bold;">pallino verde</span> e raggiungi il
         <span style="color:#dc143c;font-weight:bold;">pallino rosso</span>.<br />
         <strong>Digita il nome di uno stato confinante</strong> per avanzare.<br />
@@ -152,7 +176,8 @@
       </div>
 
       <div class="modal-actions">
-        <button id="newGameButton" class="btn primary-btn full-width">Avvia Nuova Partita</button>
+        <button id="changeGameButton" class="btn secondary-btn">↩ Cambia gioco</button>
+        <button id="newGameButton" class="btn primary-btn">Avvia Partita</button>
       </div>
     </div>
   </div>

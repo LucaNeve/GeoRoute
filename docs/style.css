@@ -713,3 +713,134 @@ input[type="text"]:focus {
   font-size: 0.82rem;
   white-space: nowrap;
 }
+/* ==========================================================================
+   7. IMPOSTAZIONI COMPATTE (ottimizzazione spazio verticale)
+   ========================================================================== */
+#settingsMenu .modal-card {
+  gap: 12px;
+  padding: 18px 20px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+#settingsMenu .modal-title { font-size: 1.15rem; }
+#settingsMenu .setting-group { gap: 5px; }
+#settingsMenu .setting-label { font-size: 0.72rem; }
+#settingsMenu .segmented-control { padding: 3px; gap: 3px; }
+#settingsMenu .segment-btn { padding: 7px 10px; font-size: 0.82rem; }
+#settingsMenu .choice-btn { padding: 7px 9px; font-size: 0.8rem; min-width: 74px; }
+#settingsMenu .custom-options { padding: 10px; gap: 8px; }
+#settingsMenu .modal-actions { margin-top: 4px; }
+
+/* ==========================================================================
+   8. INDICATORE ERRORI & PULSANTE INDIZIO
+   ========================================================================== */
+.errors-badge {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 10px;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  font-size: 0.95rem;
+}
+.errors-badge .err-heart { line-height: 1; }
+.errors-badge .err-heart.lost { opacity: 0.9; }
+
+.hint-btn { position: relative; }
+.hint-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hint-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #f6ad2c;
+  color: #1a202c;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ==========================================================================
+   9. SCHERMATA DI SCELTA GIOCO
+   ========================================================================== */
+.game-select-overlay {
+  align-items: center;
+  justify-content: center;
+}
+.game-select-wrap {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 720px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.game-select-heading {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+.game-select-subheading {
+  color: #a0aec0;
+  font-size: 1rem;
+  margin-top: -10px;
+}
+.game-select-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.game-select-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 200px;
+  padding: 28px 20px;
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  color: #f7fafc;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.game-select-card:hover {
+  transform: translateY(-4px);
+  border-color: #3182ce;
+  background: #111d38;
+  box-shadow: 0 16px 40px rgba(49, 130, 206, 0.25);
+}
+.game-select-emoji {
+  font-size: 3.2rem;
+  line-height: 1;
+}
+.game-select-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.game-select-desc {
+  font-size: 0.88rem;
+  color: #a0aec0;
+  line-height: 1.4;
+  max-width: 240px;
+}
+
+@media (max-width: 560px) {
+  .game-select-grid { grid-template-columns: 1fr; }
+  .game-select-card { min-height: 148px; padding: 22px 18px; }
+  .game-select-emoji { font-size: 2.6rem; }
+  .game-select-heading { font-size: 1.6rem; }
+}
