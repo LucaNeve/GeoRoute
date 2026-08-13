@@ -659,9 +659,9 @@ function handleError(message) {
   }
 
   if (remaining === 0) {
-    setStatus(`${message} (ultimo errore rimasto!)`);
+    setStatus(`${message} (ultimo tentativo rimasto!)`);
   } else {
-    setStatus(`${message} (${remaining} error${remaining === 1 ? 'e' : 'i'} riman${remaining === 1 ? 'e' : 'gono'})`);
+    setStatus(`${message} (${remaining} tentativ${remaining === 1 ? 'o' : 'i'} rimast${remaining === 1 ? 'o' : 'i'})`);
   }
 }
 
@@ -691,7 +691,7 @@ function updateErrorsIndicator() {
     heart.textContent = i < remaining ? '❤' : '🖤';
     el.appendChild(heart);
   }
-  el.title = `${remaining} error${remaining === 1 ? 'e' : 'i'} riman${remaining === 1 ? 'e' : 'gono'}`;
+  el.title = `${remaining} tentativ${remaining === 1 ? 'o' : 'i'} rimast${remaining === 1 ? 'o' : 'i'}`;
 }
 
 function updateHintUI() {
@@ -721,12 +721,12 @@ function useHint() {
   if (gameType === 'guess') {
     const usedIdx = 2 - g.hintsLeft; // 0 = primo indizio, 1 = secondo
     const target = g.target;
+    const name = (target.name || '').trim();
     if (usedIdx === 0) {
-      setStatus(`💡 Indizio: il paese si trova in ${regionLabel(target.region)}.`, true);
+      setStatus(`💡 Indizio: il paese inizia con "${name.slice(0, 1).toUpperCase()}".`, true);
     } else {
-      const name = target.name || '';
-      const letters = name.replace(/[^A-Za-zÀ-ÿ]/g, '').length;
-      setStatus(`💡 Indizio: inizia per "${(name[0] || '').toUpperCase()}" e ha ${letters} lettere.`, true);
+      const twoLetters = name.slice(0, 1).toUpperCase() + name.slice(1, 2).toLowerCase();
+      setStatus(`💡 Indizio: il paese inizia con "${twoLetters}".`, true);
     }
     g.hintsLeft--;
   } else {
@@ -889,9 +889,9 @@ function handleGuessError(message) {
   }
 
   if (remaining === 0) {
-    setStatus(`${message} (ultimo tentativo!)`);
+    setStatus(`${message} (ultimo tentativo rimasto!)`);
   } else {
-    setStatus(`${message} (${remaining} tentativ${remaining === 1 ? 'o' : 'i'} riman${remaining === 1 ? 'e' : 'gono'})`);
+    setStatus(`${message} (${remaining} tentativ${remaining === 1 ? 'o' : 'i'} rimast${remaining === 1 ? 'o' : 'i'})`);
   }
 }
 
